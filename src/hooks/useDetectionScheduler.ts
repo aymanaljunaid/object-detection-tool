@@ -2,12 +2,11 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { initializeDetector, disposeDetector, getDetector } from '@/services/detector';
+import { initWorkerClient, disposeWorkerClient, getWorkerClient } from '@/services/detectionWorkerClient';
 import { useMultiFrameCapture } from './useFrameCapture';
 import { DEFAULT_DETECTION_CONFIG } from '@/lib/constants';
 
 export function useDetectionScheduler() {
-  const detectionEnabledRef = useRef(false);
   const viewModeRef = useRef(useAppStore.getState().viewMode);
   const primarySourceIdRef = useRef(useAppStore.getState().primarySourceId);
   const sourceOrderRef = useRef(useAppStore.getState().sourceOrder);
@@ -15,7 +14,6 @@ export function useDetectionScheduler() {
 
   useEffect(() => {
     return useAppStore.subscribe((state) => {
-      detectionEnabledRef.current = state.detectionEnabled;
       viewModeRef.current = state.viewMode;
       primarySourceIdRef.current = state.primarySourceId;
       sourceOrderRef.current = state.sourceOrder;
@@ -79,8 +77,8 @@ export function useDetectionScheduler() {
     const video = videoRefsRef.current.get(sourceId);
     if (!video || video.readyState < 2 || video.videoWidth === 0) return;
 
-    const detector = getDetector(yoloConfigRef.current);
-    if (!detector.isReady()) return;
+    const workerClient = getWorkerClient();
+    if (!workerClient.isReady()) return;
 
     processingRef.current.add(sourceId);
 
@@ -91,19 +89,23 @@ export function useDetectionScheduler() {
       const imageData = getImageData(sourceId);
       if (!imageData) return;
 
-      const result = await detector.detect(
+      const result = await workerClient.detect({
         sourceId,
-        imageData,
-        { width: frame.width, height: frame.height },
-        { width: frame.originalWidth, height: frame.originalHeight }
-      );
+        pixels: new Uint8ClampedArray(imageData.data.buffer.slice(0)),
+        capW: frame.width,
+        capH: frame.height,
+        origW: frame.originalWidth,
+        origH: frame.originalHeight,
+        config: yoloConfigRef.current,
+      });
 
+      // Update store — only if source still active
       const src = useAppStore.getState().sources.get(sourceId);
       if (src?.detectionEnabled && (src.status === 'playing' || src.status === 'ready')) {
         useAppStore.getState().updateDetections(sourceId, result);
       }
     } catch {
-      // silently ignore per-frame errors
+      // ignore per-frame errors
     } finally {
       processingRef.current.delete(sourceId);
     }
@@ -121,54 +123,47 @@ export function useDetectionScheduler() {
         : DEFAULT_DETECTION_CONFIG.gridModeTargetFPS;
       const interval = 1000 / targetFPS;
 
-      if (ts - lastRunRef.current < interval) {
-        rafRef.current = requestAnimationFrame((t) => loopFnRef.current?.(t));
-        return;
-      }
+      if (ts - lastRunRef.current >= interval) {
+        const sources = getSourcesToProcess();
+        const now = performance.now();
+        const ready = sources.filter(id => {
+          const last = lastDetectionTimeRef.current.get(id) ?? 0;
+          return now - last >= DEFAULT_DETECTION_CONFIG.minDetectionInterval;
+        });
 
-      const sources = getSourcesToProcess();
-      const now = performance.now();
+        if (ready.length > 0) {
+          const id = ready[0];
+          lastDetectionTimeRef.current.set(id, now);
+          void runDetection(id);
+          lastRunRef.current = ts;
+          if (DEFAULT_DETECTION_CONFIG.enableRotation && viewMode === 'grid') {
+            currentSourceIndexRef.current += 1;
+          }
+        }
 
-      const ready = sources.filter((id) => {
-        const last = lastDetectionTimeRef.current.get(id) ?? 0;
-        return now - last >= DEFAULT_DETECTION_CONFIG.minDetectionInterval;
-      });
-
-      if (ready.length > 0) {
-        const id = ready[0];
-        lastDetectionTimeRef.current.set(id, now);
-        void runDetection(id);
-        lastRunRef.current = ts;
-
-        if (DEFAULT_DETECTION_CONFIG.enableRotation && viewMode === 'grid') {
-          currentSourceIndexRef.current += 1;
+        if (now - lastDebugUpdateRef.current >= 3000) {
+          lastDebugUpdateRef.current = now;
+          useAppStore.getState().updateDebugInfo({
+            activeSources: sources.length,
+            activeDetections: processingRef.current.size,
+          });
         }
       }
 
-      if (now - lastDebugUpdateRef.current >= 3000) {
-        lastDebugUpdateRef.current = now;
-        useAppStore.getState().updateDebugInfo({
-          activeSources: sources.length,
-          activeDetections: processingRef.current.size,
-        });
-      }
-
-      rafRef.current = requestAnimationFrame((t) => loopFnRef.current?.(t));
+      rafRef.current = requestAnimationFrame(t => loopFnRef.current!(t));
     };
   }, [getSourcesToProcess, runDetection]);
 
   const start = useCallback(async () => {
     if (isRunningRef.current) return;
-    await initializeDetector(yoloConfigRef.current);
+    await initWorkerClient(yoloConfigRef.current);
     isRunningRef.current = true;
     lastRunRef.current = performance.now();
-    rafRef.current = requestAnimationFrame((t) => loopFnRef.current?.(t));
-
+    rafRef.current = requestAnimationFrame(t => loopFnRef.current!(t));
     const { updateDetectionStatus, sources, sourceOrder } = useAppStore.getState();
     for (const id of sourceOrder) {
       const s = sources.get(id);
-      const eligible = s?.detectionEnabled && !s.error && (s.status === 'playing' || s.status === 'ready');
-      updateDetectionStatus(id, eligible ? 'active' : 'inactive');
+      updateDetectionStatus(id, (s?.detectionEnabled && !s.error && (s.status === 'playing' || s.status === 'ready')) ? 'active' : 'inactive');
     }
   }, []);
 
@@ -182,8 +177,8 @@ export function useDetectionScheduler() {
 
   useEffect(() => {
     const unsub = useAppStore.subscribe(
-      (state) => state.detectionEnabled,
-      (enabled) => { if (enabled) void start(); else stop(); }
+      s => s.detectionEnabled,
+      enabled => { if (enabled) void start(); else stop(); }
     );
     if (useAppStore.getState().detectionEnabled) void start();
     return () => { unsub(); stop(); };
@@ -195,7 +190,7 @@ export function useDetectionScheduler() {
       if (document.hidden) {
         if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
       } else if (isRunningRef.current) {
-        rafRef.current = requestAnimationFrame((t) => loopFnRef.current?.(t));
+        rafRef.current = requestAnimationFrame(t => loopFnRef.current!(t));
       }
     };
     document.addEventListener('visibilitychange', onVis);
@@ -203,10 +198,7 @@ export function useDetectionScheduler() {
   }, []);
 
   useEffect(() => {
-    return () => {
-      stop();
-      void disposeDetector();
-    };
+    return () => { stop(); disposeWorkerClient(); };
   }, [stop]);
 
   return { registerVideoRef };
