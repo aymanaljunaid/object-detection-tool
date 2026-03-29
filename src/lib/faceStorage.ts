@@ -150,9 +150,15 @@ export async function addSample(
   assertValidFaceEmbedding(embedding);
 
   const db = await getDB();
-  const identity = await db.get('identities', identityId);
+
+  // Bug 10 fix: open the transaction first, then re-read the identity inside it.
+  // Previously the identity was read outside the transaction, allowing concurrent
+  // addSample() calls to clobber each other's samples[] via stale overwrite.
+  const tx = db.transaction(['identities', 'samples'], 'readwrite');
+  const identity = await tx.objectStore('identities').get(identityId);
 
   if (!identity) {
+    tx.abort();
     throw new Error(`Identity ${identityId} not found`);
   }
 
@@ -164,8 +170,6 @@ export async function addSample(
     capturedAt: now,
     source,
   };
-
-  const tx = db.transaction(['identities', 'samples'], 'readwrite');
 
   await tx.objectStore('samples').put({
     ...sample,

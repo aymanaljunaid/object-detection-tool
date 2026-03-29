@@ -213,11 +213,14 @@ export const DetectionOverlay = memo(function DetectionOverlay({
     return source?.lastDetections ?? null;
   });
 
+  // Bug 9 fix: bbox is top-left format {x, y, width, height} — no center offset needed.
+  // Previous code subtracted width/2 and height/2 treating it as center-format,
+  // which shifted every box up and to the left by half its own size.
   const mapDetectionToDisplayCoords = useCallback(
     (detection: Detection, displaySize: Dimensions): Rect => {
       return {
-        x: detection.bbox.x * displaySize.width - (detection.bbox.width * displaySize.width) / 2,
-        y: detection.bbox.y * displaySize.height - (detection.bbox.height * displaySize.height) / 2,
+        x: detection.bbox.x * displaySize.width,
+        y: detection.bbox.y * displaySize.height,
         width: detection.bbox.width * displaySize.width,
         height: detection.bbox.height * displaySize.height,
       };
