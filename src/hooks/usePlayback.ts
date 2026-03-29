@@ -3,7 +3,7 @@
  * ================
  * Main hook for managing video playback lifecycle.
  * Handles adapter creation, initialization, cleanup, and state updates.
- * 
+ *
  * Key features:
  * - Generation-based async cancellation
  * - Automatic cleanup on unmount
@@ -15,7 +15,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { createSourceAdapter, ISourceAdapter } from '@/lib/adapters';
 import { logger, LOG_CATEGORIES } from '@/lib/utils/logger';
-import type { SourceConfig, SourceStatus, PlaybackError } from '@/types';
+import type { SourceConfig, SourceStatus, PlaybackError, PlaybackState } from '@/types';
 
 interface UsePlaybackOptions {
   sourceId: string;
@@ -149,10 +149,12 @@ export function usePlayback({
       updateIntervalRef.current = setInterval(() => {
         if (adapterRef.current && videoRef.current) {
           const playbackState = adapterRef.current.getPlaybackState();
+          // Bug 7 fix: Use typed Partial<PlaybackState> spread instead of
+          // unsafe `as any` cast, which was hiding adapter contract violations.
           updatePlaybackState(sourceId, {
-            ...playbackState,
+            ...(playbackState as Partial<PlaybackState>),
             sourceId,
-          } as any);
+          });
         }
       }, 500);
 
@@ -166,7 +168,7 @@ export function usePlayback({
 
       const playbackError = err as PlaybackError;
       const errorMessage = playbackError.message || 'Unknown initialization error';
-      
+
       logger.error(LOG_CATEGORIES.PLAYBACK, `Initialization failed for ${sourceId}`, {
         error: errorMessage,
       });
