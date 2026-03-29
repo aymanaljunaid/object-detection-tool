@@ -39,6 +39,22 @@ export class HLSAdapter extends BaseSourceAdapter {
     }
 
     return new Promise((resolve, reject) => {
+      // Track whether the promise has already been settled to guard
+      // against reject() being called after resolve() (Bug 13 fix).
+      let settled = false;
+      const safeReject = (err: unknown) => {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      };
+      const safeResolve = (value: InitResult) => {
+        if (!settled) {
+          settled = true;
+          resolve(value);
+        }
+      };
+
       // Check if native HLS is supported (Safari)
       if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
         logger.debug(LOG_CATEGORIES.HLS, 'Using native HLS support');
@@ -51,15 +67,15 @@ export class HLSAdapter extends BaseSourceAdapter {
           
           videoElement.play()
             .then(() => {
-              resolve({
+              safeResolve({
                 videoElement,
                 isLive: true,
               });
             })
-            .catch(reject);
+            .catch(safeReject);
         };
         
-        const onError = (e: Event) => {
+        const onError = (_e: Event) => {
           videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
           videoElement.removeEventListener('error', onError);
           
@@ -68,7 +84,7 @@ export class HLSAdapter extends BaseSourceAdapter {
             type: 'source',
             recoverable: true,
           };
-          reject(error);
+          safeReject(error);
         };
         
         videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
@@ -77,7 +93,7 @@ export class HLSAdapter extends BaseSourceAdapter {
         signal.addEventListener('abort', () => {
           videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
           videoElement.removeEventListener('error', onError);
-          reject(new Error('Initialization cancelled'));
+          safeReject(new Error('Initialization cancelled'));
         });
         
         return;
@@ -85,43 +101,50 @@ export class HLSAdapter extends BaseSourceAdapter {
 
       // Use HLS.js
       if (!Hls.isSupported()) {
-        reject(new Error('HLS is not supported in this browser'));
+        safeReject(new Error('HLS is not supported in this browser'));
         return;
       }
 
       const hls = new Hls({
         ...PLAYBACK_CONFIG.hls,
-        xhrSetup: (xhr) => {
+        xhrSetup: (_xhr) => {
           // Can add headers here if needed
         },
       });
 
       this.hlsInstance = hls;
 
-      // Handle errors
+      // Bug 13 fix: wrap the error handler in try/catch and use safeReject so
+      // that (a) errors thrown inside the switch don't propagate unhandled, and
+      // (b) reject is never called after the Promise has already been resolved.
       hls.on(Hls.Events.ERROR, (_event: string, data: unknown) => {
         const errData = data as { fatal: boolean; type: string; details?: string };
         logger.error(LOG_CATEGORIES.HLS, 'HLS error', errData);
 
         if (errData.fatal) {
-          switch (errData.type) {
-            case 'networkError':
-              logger.warn(LOG_CATEGORIES.HLS, 'Network error, attempting recovery');
-              hls.startLoad();
-              break;
-            case 'mediaError':
-              logger.warn(LOG_CATEGORIES.HLS, 'Media error, attempting recovery');
-              hls.recoverMediaError();
-              break;
-            default: {
-              const error: PlaybackError = {
-                message: errData.details || 'Fatal HLS error',
-                type: 'network',
-                recoverable: false,
-              };
-              reject(error);
-              break;
+          try {
+            switch (errData.type) {
+              case 'networkError':
+                logger.warn(LOG_CATEGORIES.HLS, 'Network error, attempting recovery');
+                hls.startLoad();
+                break;
+              case 'mediaError':
+                logger.warn(LOG_CATEGORIES.HLS, 'Media error, attempting recovery');
+                hls.recoverMediaError();
+                break;
+              default: {
+                const error: PlaybackError = {
+                  message: errData.details || 'Fatal HLS error',
+                  type: 'network',
+                  recoverable: false,
+                };
+                safeReject(error);
+                break;
+              }
             }
+          } catch (handlerErr) {
+            logger.error(LOG_CATEGORIES.HLS, 'Error in HLS error handler', handlerErr);
+            safeReject(handlerErr);
           }
         }
       });
@@ -132,25 +155,25 @@ export class HLSAdapter extends BaseSourceAdapter {
         
         if (signal.aborted) {
           hls.destroy();
-          reject(new Error('Initialization cancelled'));
+          safeReject(new Error('Initialization cancelled'));
           return;
         }
 
         videoElement.play()
           .then(() => {
-            resolve({
+            safeResolve({
               videoElement,
               hlsInstance: hls,
               isLive: true,
             });
           })
-          .catch(reject);
+          .catch(safeReject);
       });
 
       // Listen for abort
       signal.addEventListener('abort', () => {
         hls.destroy();
-        reject(new Error('Initialization cancelled'));
+        safeReject(new Error('Initialization cancelled'));
       });
 
       // Load source

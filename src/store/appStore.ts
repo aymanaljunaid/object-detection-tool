@@ -318,12 +318,28 @@ export const useAppStore = create<AppState & AppActions>()(
 
         const newSources = new Map(state.sources);
         const existingPlayback = source.playbackState;
-        
+
+        // Bug 12 fix: when no playbackState exists yet, provide all required
+        // PlaybackState defaults before spreading the incoming updates.
+        // Previously the fallback was cast as PlaybackState with missing required
+        // fields, causing downstream runtime crashes on first playback update.
+        const newPlayback: PlaybackState = existingPlayback
+          ? { ...existingPlayback, ...stateUpdates }
+          : {
+              sourceId: id,
+              currentTime: 0,
+              duration: 0,
+              volume: 1,
+              muted: false,
+              playbackRate: 1,
+              isLive: false,
+              buffered: null,
+              ...stateUpdates,
+            };
+
         newSources.set(id, {
           ...source,
-          playbackState: existingPlayback
-            ? { ...existingPlayback, ...stateUpdates }
-            : { sourceId: id, ...stateUpdates } as PlaybackState,
+          playbackState: newPlayback,
         });
 
         return { sources: newSources };

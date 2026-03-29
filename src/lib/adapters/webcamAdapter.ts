@@ -109,13 +109,18 @@ export class WebcamAdapter extends BaseSourceAdapter {
   }
 
   /**
-   * Get available webcam devices
+   * Get available webcam devices.
+   *
+   * Bug 11 fix: the temporary stream opened to trigger the permission prompt
+   * was never stopped, leaving the camera indicator light on indefinitely.
+   * Now all tracks are stopped immediately after device enumeration.
    */
   static async getAvailableDevices(): Promise<MediaDeviceInfo[]> {
     try {
-      // Request permission first
-      await navigator.mediaDevices.getUserMedia({ video: true });
-      
+      // Request permission first, then immediately release the stream.
+      const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      permissionStream.getTracks().forEach((track) => track.stop());
+
       const devices = await navigator.mediaDevices.enumerateDevices();
       return devices.filter(device => device.kind === 'videoinput');
     } catch (error) {
