@@ -6,13 +6,16 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: false,
   },
   reactStrictMode: false,
-  webpack(config) {
-    // Enable Web Worker bundling via new Worker(new URL(...))
-    config.module.rules.push({
-      test: /\.worker\.(ts|js)$/,
-      loader: 'worker-loader',
-      options: { esModule: true },
-    });
+  webpack(config, { isServer }) {
+    if (!isServer) {
+      // face-api.js references Node.js 'fs' — tell webpack to ignore it in the browser
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        crypto: false,
+      };
+    }
     return config;
   },
   async headers() {
