@@ -189,11 +189,20 @@ export async function removeSample(
   sampleId: string
 ): Promise<void> {
   const db = await getDB();
-  const identity = await db.get('identities', identityId);
 
-  if (!identity) return;
-
+  // Bug 17 fix: open the transaction first, then read the identity inside it.
+  // Previously the identity was fetched outside the transaction with a bare
+  // db.get(), creating the same stale-overwrite race that was fixed in
+  // addSample (Bug 10). Concurrent removals could clobber each other's
+  // samples[] update because each caller saw a different snapshot of the
+  // identity before writing back.
   const tx = db.transaction(['identities', 'samples'], 'readwrite');
+  const identity = await tx.objectStore('identities').get(identityId);
+
+  if (!identity) {
+    tx.abort();
+    return;
+  }
 
   await tx.objectStore('samples').delete(sampleId);
 

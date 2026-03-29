@@ -2,6 +2,11 @@
  * Video Source Adapter
  * ====================
  * Handles direct video URLs (MP4) and local video/image files.
+ *
+ * Bug 16 fix: VideoAdapter.initialize now uses a settled guard
+ * (safeResolve / safeReject) so that a DOM 'error' event firing after
+ * 'canplay' has already resolved the Promise does not produce a silent
+ * unhandled rejection.
  */
 
 import { BaseSourceAdapter, InitResult } from './types';
@@ -52,19 +57,36 @@ export class VideoAdapter extends BaseSourceAdapter {
     }
 
     return new Promise((resolve, reject) => {
+      // Bug 16 fix: guard against settling the Promise more than once.
+      // Without this, an 'error' DOM event arriving after 'canplay' has
+      // already resolved the Promise causes a silent unhandled rejection.
+      let settled = false;
+      const safeResolve = (value: InitResult) => {
+        if (!settled) {
+          settled = true;
+          resolve(value);
+        }
+      };
+      const safeReject = (err: unknown) => {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      };
+
       const onCanPlay = () => {
         videoElement.removeEventListener('canplay', onCanPlay);
         videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
         videoElement.removeEventListener('error', onError);
-        
+
         videoElement.play()
           .then(() => {
-            resolve({
+            safeResolve({
               videoElement,
               isLive: false,
             });
           })
-          .catch(reject);
+          .catch(safeReject);
       };
 
       const onLoadedMetadata = () => {
@@ -75,7 +97,7 @@ export class VideoAdapter extends BaseSourceAdapter {
         });
       };
 
-      const onError = (e: Event) => {
+      const onError = (_e: Event) => {
         videoElement.removeEventListener('canplay', onCanPlay);
         videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
         videoElement.removeEventListener('error', onError);
@@ -111,7 +133,7 @@ export class VideoAdapter extends BaseSourceAdapter {
           recoverable: type === 'network',
         };
 
-        reject(error);
+        safeReject(error);
       };
 
       videoElement.addEventListener('canplay', onCanPlay);
@@ -124,7 +146,7 @@ export class VideoAdapter extends BaseSourceAdapter {
         videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
         videoElement.removeEventListener('error', onError);
         this.cleanupObjectUrl();
-        reject(new Error('Initialization cancelled'));
+        safeReject(new Error('Initialization cancelled'));
       });
 
       // Set source and load
@@ -188,7 +210,7 @@ export class ImageAdapter extends BaseSourceAdapter {
     // The video element will show the image
     return new Promise((resolve, reject) => {
       const img = new Image();
-      
+
       img.onload = () => {
         if (signal.aborted) {
           this.cleanupObjectUrl();
@@ -200,21 +222,21 @@ export class ImageAdapter extends BaseSourceAdapter {
         this.canvasElement = document.createElement('canvas');
         this.canvasElement.width = img.naturalWidth;
         this.canvasElement.height = img.naturalHeight;
-        
+
         const ctx = this.canvasElement.getContext('2d');
         if (!ctx) {
           reject(new Error('Failed to create canvas context'));
           return;
         }
-        
+
         ctx.drawImage(img, 0, 0);
 
         // Use canvas as video source
         const stream = this.canvasElement.captureStream(1); // 1 fps
         this.mediaStream = stream;
-        
+
         videoElement.srcObject = stream;
-        
+
         videoElement.onloadedmetadata = () => {
           videoElement.play()
             .then(() => {

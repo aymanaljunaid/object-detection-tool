@@ -8,6 +8,10 @@
  * - Throttled recognition to maintain performance
  * - Caches results to avoid redundant processing
  * - Updates detection results with face names
+ *
+ * Bug 15 fix: call setFaceRecognitionStatus('idle') when face recognition
+ * is disabled so that re-enabling correctly re-triggers the model-loading
+ * effect (which only fires when status === 'idle').
  */
 
 import { useRef, useCallback, useEffect } from 'react';
@@ -54,8 +58,15 @@ export function useFaceRecognition() {
       state.cache.clear();
       state.lastRunTime.clear();
       state.pending.clear();
+
+      // Bug 15 fix: reset status to 'idle' so that when the user re-enables
+      // face recognition the model-loading effect below fires again.
+      // Without this reset, status stays at 'ready' or 'error' and the
+      // condition (faceRecognitionEnabled && faceRecognitionStatus === 'idle')
+      // is never true again, permanently blocking model reload.
+      setFaceRecognitionStatus('idle');
     }
-  }, [faceRecognitionEnabled]);
+  }, [faceRecognitionEnabled, setFaceRecognitionStatus]);
 
   useEffect(() => {
     if (faceRecognitionEnabled && faceRecognitionStatus === 'idle') {
