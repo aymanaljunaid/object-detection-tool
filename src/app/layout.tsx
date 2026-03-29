@@ -18,9 +18,7 @@ export const metadata: Metadata = {
   description: "A real-time, multi-source object detection dashboard running YOLOv8 entirely in the browser.",
   keywords: ["Object Detection", "YOLOv8", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "ONNX Runtime Web"],
   authors: [{ name: "Maintainer" }],
-  icons: {
-    icon: "/logo.svg",
-  },
+  icons: { icon: "/logo.svg" },
   openGraph: {
     title: "Object Detection Dashboard",
     description: "A real-time, multi-source object detection dashboard.",
@@ -37,12 +35,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body
+        suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         {children}
