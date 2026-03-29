@@ -5,6 +5,7 @@ import { useAppStore } from '@/store/appStore';
 import { initWorkerClient, disposeWorkerClient, getWorkerClient } from '@/services/detectionWorkerClient';
 import { useMultiFrameCapture } from './useFrameCapture';
 import { DEFAULT_DETECTION_CONFIG } from '@/lib/constants';
+import { overlayBus } from '@/lib/overlayBus';
 
 export function useDetectionScheduler() {
   const viewModeRef = useRef(useAppStore.getState().viewMode);
@@ -99,7 +100,10 @@ export function useDetectionScheduler() {
         config: yoloConfigRef.current,
       });
 
-      // Update store — only if source still active
+      // Paint overlay immediately — bypasses Zustand->React re-render lag
+      overlayBus.emit(sourceId, result);
+
+      // Update store for sidebar stats (non-visual, no urgency)
       const src = useAppStore.getState().sources.get(sourceId);
       if (src?.detectionEnabled && (src.status === 'playing' || src.status === 'ready')) {
         useAppStore.getState().updateDetections(sourceId, result);
@@ -139,6 +143,9 @@ export function useDetectionScheduler() {
           if (DEFAULT_DETECTION_CONFIG.enableRotation && viewMode === 'grid') {
             currentSourceIndexRef.current += 1;
           }
+        } else {
+          // Still advance lastRun so we don't spin-check every RAF tick
+          lastRunRef.current = ts;
         }
 
         if (now - lastDebugUpdateRef.current >= 3000) {
