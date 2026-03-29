@@ -9,6 +9,9 @@
  * - Syncs face recognizer enabled state reliably
  * - Preserves recognized identities on detections
  * - Adds safer per-source cleanup and clearer debug logging
+ * - Bug 5 fix: faceRecognitionEnabled moved to a ref so it is NOT in
+ *   runDetection's useCallback deps, preventing the RAF loop from restarting
+ *   on every face-recognition state toggle.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
@@ -63,6 +66,17 @@ export function useDetectionScheduler() {
   const updateDebugInfo = useAppStore((state) => state.updateDebugInfo);
 
   const faceRecognitionEnabled = useAppStore((state) => state.faceRecognitionEnabled);
+
+  // Bug 5 fix: Keep faceRecognitionEnabled in a ref so runDetection can read
+  // the latest value without it appearing in the useCallback dependency array.
+  // Previously, having faceRecognitionEnabled as a dep caused runDetection to
+  // get a new identity on every toggle, which in turn caused the
+  // detectionLoopRef effect to re-run and restart the entire RAF loop,
+  // potentially dropping in-flight frames.
+  const faceRecognitionEnabledRef = useRef(faceRecognitionEnabled);
+  useEffect(() => {
+    faceRecognitionEnabledRef.current = faceRecognitionEnabled;
+  }, [faceRecognitionEnabled]);
 
   const schedulerRef = useRef<SchedulerState>({
     isRunning: false,
@@ -211,7 +225,9 @@ export function useDetectionScheduler() {
         { width: frame.originalWidth, height: frame.originalHeight }
       );
 
-      if (faceRecognitionEnabled) {
+      // Read face recognition toggle from ref (not closure) to avoid stale value
+      // and to prevent runDetection from being recreated on every toggle.
+      if (faceRecognitionEnabledRef.current) {
         const faceRecognizer = getFaceRecognizer();
 
         // Keep recognizer state in sync with app state.
@@ -260,8 +276,6 @@ export function useDetectionScheduler() {
                       personBox
                     );
 
-                    // IoU alone is a bad metric here because a face is much smaller than a person box.
-                    // Use a weighted score that favors containment and recognized identities.
                     const recognitionBonus = face.identityName ? 1 : 0;
                     const score =
                       (faceCenterInsidePerson ? 1.0 : 0.0) +
@@ -365,7 +379,9 @@ export function useDetectionScheduler() {
     } finally {
       state.processingSources.delete(sourceId);
     }
-  }, [captureFrame, getImageData, updateDetections, faceRecognitionEnabled]);
+  // faceRecognitionEnabled intentionally omitted — read via ref to avoid
+  // restarting the RAF loop on every toggle (Bug 5).
+  }, [captureFrame, getImageData, updateDetections]);
 
   const detectionLoopRef = useRef<((timestamp: number) => void) | null>(null);
 

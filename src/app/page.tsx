@@ -30,7 +30,6 @@ import {
 } from '@/components/ui/resizable';
 import {
   Video,
-  PanelLeftClose,
   PanelLeft,
   Bug,
   Moon,
@@ -95,8 +94,8 @@ export default function HomePage() {
           {detectionEnabled && (
             <span className={cn(
               "flex items-center gap-1 text-xs px-2 py-0.5 rounded-full",
-              isDemoMode 
-                ? "bg-amber-500/20 text-amber-500" 
+              isDemoMode
+                ? "bg-amber-500/20 text-amber-500"
                 : "bg-green-500/20 text-green-500"
             )}>
               {isDemoMode ? (
@@ -153,24 +152,29 @@ export default function HomePage() {
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar (desktop) */}
         <ResizablePanelGroup direction="horizontal" className="flex-1">
-          {/* Source panel */}
-          <ResizablePanel
-            defaultSize={20}
-            minSize={15}
-            maxSize={30}
-            className={cn(
-              'hidden md:block',
-              !isSourcePanelOpen && 'hidden'
-            )}
-          >
-            <div className="h-full flex flex-col border-r bg-card">
-              <SourceManagerPanel className="flex-1" />
-              <Separator />
-              <DetectionControlPanel />
-              <Separator />
-              <FaceMemoryPanel />
-            </div>
-          </ResizablePanel>
+
+          {/*
+           * Bug 1 fix: Conditionally render ResizablePanel instead of using CSS
+           * `hidden` on it. When the panel is hidden via className only, the
+           * ResizablePanelGroup still allocates its defaultSize (20%) as dead
+           * space. Removing it from the DOM entirely collapses that space.
+           */}
+          {isSourcePanelOpen && (
+            <ResizablePanel
+              defaultSize={20}
+              minSize={15}
+              maxSize={30}
+              className="hidden md:block"
+            >
+              <div className="h-full flex flex-col border-r bg-card">
+                <SourceManagerPanel className="flex-1" />
+                <Separator />
+                <DetectionControlPanel />
+                <Separator />
+                <FaceMemoryPanel />
+              </div>
+            </ResizablePanel>
+          )}
 
           {/* Toggle button */}
           {isSourcePanelOpen && (
@@ -232,7 +236,7 @@ function EmptyState() {
         <SourceHint icon="📁" label="Local File" />
       </div>
       <p className="text-sm text-muted-foreground mt-6">
-        Click "Add Source" in the sidebar to get started
+        Click &quot;Add Source&quot; in the sidebar to get started
       </p>
     </div>
   );

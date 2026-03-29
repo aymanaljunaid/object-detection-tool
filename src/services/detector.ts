@@ -2,7 +2,7 @@
  * YOLOv8 Detector Service
  * =======================
  * Runs YOLOv8 object detection in the browser using ONNX Runtime Web.
- * 
+ *
  * Features:
  * - WASM-based inference
  * - Supports both raw and end-to-end ONNX model formats
@@ -99,8 +99,15 @@ export class YOLOv8Detector {
    * Load the ONNX model or fall back to demo mode
    */
   async loadModel(): Promise<void> {
-    if (this.state.isReady || this.state.isLoading) {
+    if (this.state.isReady) {
       return;
+    }
+
+    // Bug 4 fix: If isLoading is stuck true but isReady is still false (e.g.,
+    // a previous init attempt failed mid-flight), reset isLoading so a retry
+    // is possible instead of silently bailing out.
+    if (this.state.isLoading) {
+      this.state.isLoading = false;
     }
 
     this.state.isLoading = true;
@@ -112,16 +119,16 @@ export class YOLOv8Detector {
 
     // Check if model is available
     const modelStatus = await checkModelAvailability(this.state.config.modelPath);
-    
+
     if (!modelStatus.available) {
       logger.warn(LOG_CATEGORIES.DETECTION, `Model not available: ${modelStatus.reason}`);
       logger.info(LOG_CATEGORIES.DETECTION, 'Falling back to demo mode with simulated detections');
-      
+
       this.state.isDemoMode = true;
       this.state.isReady = true;
       this.state.isLoading = false;
       this.state.error = `Running in demo mode: ${modelStatus.reason}`;
-      
+
       logger.info(LOG_CATEGORIES.DETECTION, 'Detector ready in demo mode');
       return;
     }
@@ -176,8 +183,7 @@ export class YOLOv8Detector {
         sessionOptions
       );
 
-      // Log which provider was actually used (check session info if available)
-      logger.info(LOG_CATEGORIES.DETECTION, `ONNX session created successfully`);
+      logger.info(LOG_CATEGORIES.DETECTION, 'ONNX session created successfully');
       logger.info(LOG_CATEGORIES.DETECTION, `Configured execution provider: ${executionProvider}`);
 
       // Get input and output names from session
@@ -187,7 +193,7 @@ export class YOLOv8Detector {
       this.state.inputName = inputNames[0] || 'images';
       this.state.outputName = outputNames[0] || 'output0';
 
-      logger.info(LOG_CATEGORIES.DETECTION, `Model loaded successfully`);
+      logger.info(LOG_CATEGORIES.DETECTION, 'Model loaded successfully');
       logger.info(LOG_CATEGORIES.DETECTION, `  Input names: [${inputNames.join(', ')}]`);
       logger.info(LOG_CATEGORIES.DETECTION, `  Output names: [${outputNames.join(', ')}]`);
       logger.info(LOG_CATEGORIES.DETECTION, `  Using input: "${this.state.inputName}", output: "${this.state.outputName}"`);
@@ -202,7 +208,7 @@ export class YOLOv8Detector {
       const message = error instanceof Error ? error.message : 'Unknown error loading model';
       this.state.error = message;
       logger.error(LOG_CATEGORIES.DETECTION, 'Failed to load YOLOv8 model', error);
-      
+
       // Fall back to demo mode instead of throwing
       this.state.isDemoMode = true;
       this.state.isReady = true;
@@ -233,14 +239,14 @@ export class YOLOv8Detector {
     try {
       const feeds: Record<string, ort.Tensor> = {};
       feeds[this.state.inputName] = tensor;
-      
+
       const results = await this.state.session.run(feeds);
       const output = results[this.state.outputName];
-      
+
       // Detect model format based on output shape
       const dims = output.dims;
       logger.info(LOG_CATEGORIES.DETECTION, `Model output shape: [${dims.join(', ')}]`);
-      
+
       // End-to-end model: [1, N, 6] where N is max detections (e.g., 300)
       // Raw model: [1, 84, 8400] for 640x640 input
       if (dims.length === 3 && dims[2] === 6) {
@@ -253,7 +259,7 @@ export class YOLOv8Detector {
         logger.warn(LOG_CATEGORIES.DETECTION, `Unknown output format, will try to adapt. Shape: [${dims.join(', ')}]`);
         this.state.modelFormat = 'unknown';
       }
-      
+
       this.state.warmupDone = true;
       logger.debug(LOG_CATEGORIES.DETECTION, 'Warmup complete');
     } catch (error) {
@@ -295,18 +301,18 @@ export class YOLOv8Detector {
   private generateSimulatedDetections(frameSize: Dimensions): Detection[] {
     const detections: Detection[] = [];
     const numDetections = Math.floor(Math.random() * 4) + 1;
-    
+
     const demoClasses = [0, 1, 2, 3, 5, 7, 15, 16, 17, 24, 26, 39, 41, 56, 60, 62, 67, 73];
-    
+
     for (let i = 0; i < numDetections; i++) {
       const classId = demoClasses[Math.floor(Math.random() * demoClasses.length)];
-      
+
       const width = 0.1 + Math.random() * 0.3;
       const height = 0.1 + Math.random() * 0.3;
       const x = 0.1 + Math.random() * 0.8;
       const y = 0.1 + Math.random() * 0.8;
       const confidence = 0.5 + Math.random() * 0.45;
-      
+
       detections.push({
         id: nanoid(8),
         classId,
@@ -315,7 +321,7 @@ export class YOLOv8Detector {
         bbox: { x, y, width, height },
       });
     }
-    
+
     return detections;
   }
 
@@ -327,7 +333,7 @@ export class YOLOv8Detector {
     targetSize: number
   ): { tensor: ort.Tensor; letterboxInfo: ReturnType<typeof calculateLetterbox> } {
     const { width, height, data } = imageData;
-    
+
     const letterboxInfo = calculateLetterbox(
       { width, height },
       { width: targetSize, height: targetSize }
@@ -346,10 +352,10 @@ export class YOLOv8Detector {
         const srcIdx = (y * width + x) * 4;
         const dstX = Math.floor(x * scaleX + padX);
         const dstY = Math.floor(y * scaleY + padY);
-        
+
         if (dstX >= 0 && dstX < targetSize && dstY >= 0 && dstY < targetSize) {
           const dstIdx = dstY * targetSize + dstX;
-          
+
           inputTensor[dstIdx] = data[srcIdx] / 255;
           inputTensor[targetSize * targetSize + dstIdx] = data[srcIdx + 1] / 255;
           inputTensor[2 * targetSize * targetSize + dstIdx] = data[srcIdx + 2] / 255;
@@ -365,7 +371,7 @@ export class YOLOv8Detector {
   /**
    * Post-process end-to-end model output (NMS built-in)
    * Format: [1, N, 6] where each detection is [x1, y1, x2, y2, confidence, class_id]
-   * 
+   *
    * @param output - Model output tensor
    * @param captureSize - Size of the captured frame (downscaled)
    * @param originalSize - Size of the original video
@@ -380,11 +386,11 @@ export class YOLOv8Detector {
     const data = output.data as Float32Array;
     const dims = output.dims;
     const config = this.state.config;
-    
+
     // Shape: [1, N, 6] or [N, 6]
     const numDetections = dims.length === 3 ? dims[1] : dims[0];
     const stride = dims.length === 3 ? dims[2] : dims[1];
-    
+
     const detections: Detection[] = [];
 
     // Calculate scale factor from capture frame to original video
@@ -393,8 +399,8 @@ export class YOLOv8Detector {
 
     for (let i = 0; i < numDetections; i++) {
       const baseIdx = i * stride;
-      
-      // [x1, y1, x2, y2, confidence, class_id]
+
+      // Model outputs corner format: [x1, y1, x2, y2, confidence, class_id]
       const x1 = data[baseIdx + 0];
       const y1 = data[baseIdx + 1];
       const x2 = data[baseIdx + 2];
@@ -407,18 +413,20 @@ export class YOLOv8Detector {
         continue;
       }
 
-      // Convert from pixel coordinates in model space
-      // The model outputs coordinates in the 640x640 space (letterboxed)
+      // Bug 3 fix: The model already outputs corner-format [x1,y1,x2,y2].
+      // Pass directly as a top-left rect to mapRectTargetToSource — do NOT
+      // convert to center-format first, as mapRectTargetToSource maps the
+      // top-left and bottom-right corners internally.
       const modelBox = {
-        x: (x1 + x2) / 2,  // center x
-        y: (y1 + y2) / 2,  // center y
+        x: x1,
+        y: y1,
         width: x2 - x1,
         height: y2 - y1,
       };
 
       // Step 1: Reverse letterbox mapping (640x640 -> capture frame)
       const captureBox = mapRectTargetToSource(modelBox, letterboxInfo);
-      
+
       // Step 2: Scale from capture frame to original video
       const originalBox = {
         x: captureBox.x * scaleX,
@@ -426,7 +434,7 @@ export class YOLOv8Detector {
         width: captureBox.width * scaleX,
         height: captureBox.height * scaleY,
       };
-      
+
       // Step 3: Convert to normalized coordinates [0, 1]
       const normalizedBox: BoundingBox = {
         x: originalBox.x / originalSize.width,
@@ -452,7 +460,7 @@ export class YOLOv8Detector {
   /**
    * Post-process raw YOLOv8 output (no NMS)
    * Format: [1, 84, 8400] for 640x640
-   * 
+   *
    * @param output - Model output tensor
    * @param captureSize - Size of the captured frame (downscaled)
    * @param originalSize - Size of the original video
@@ -466,13 +474,13 @@ export class YOLOv8Detector {
   ): Detection[] {
     const data = output.data as Float32Array;
     const config = this.state.config;
-    
+
     const numClasses = 80;
     const dims = output.dims;
-    
+
     // Calculate number of predictions based on actual output size
     const numPredictions = dims.length === 3 ? dims[2] : (data.length / (4 + numClasses));
-    
+
     const detections: Detection[] = [];
 
     // Calculate scale factor from capture frame to original video
@@ -482,11 +490,9 @@ export class YOLOv8Detector {
     for (let i = 0; i < numPredictions; i++) {
       let maxClassScore = 0;
       let maxClassId = 0;
-      
+
       for (let c = 0; c < numClasses; c++) {
-        const score = dims.length === 3 
-          ? data[(4 + c) * numPredictions + i]
-          : data[(4 + c) * numPredictions + i];
+        const score = data[(4 + c) * numPredictions + i];
         if (score > maxClassScore) {
           maxClassScore = score;
           maxClassId = c;
@@ -499,11 +505,18 @@ export class YOLOv8Detector {
         const w = data[2 * numPredictions + i];
         const h = data[3 * numPredictions + i];
 
-        const modelBox = { x: cx, y: cy, width: w, height: h };
-        
+        // Raw YOLO outputs center-format (cx,cy,w,h). Convert to top-left
+        // before passing to mapRectTargetToSource.
+        const modelBox = {
+          x: cx - w / 2,
+          y: cy - h / 2,
+          width: w,
+          height: h,
+        };
+
         // Step 1: Reverse letterbox mapping (640x640 -> capture frame)
         const captureBox = mapRectTargetToSource(modelBox, letterboxInfo);
-        
+
         // Step 2: Scale from capture frame to original video
         const originalBox = {
           x: captureBox.x * scaleX,
@@ -511,7 +524,7 @@ export class YOLOv8Detector {
           width: captureBox.width * scaleX,
           height: captureBox.height * scaleY,
         };
-        
+
         // Step 3: Convert to normalized coordinates [0, 1]
         const normalizedBox: BoundingBox = {
           x: originalBox.x / originalSize.width,
@@ -537,7 +550,7 @@ export class YOLOv8Detector {
 
   /**
    * Post-process YOLOv8 output - auto-detects format
-   * 
+   *
    * @param output - Model output tensor
    * @param captureSize - Size of the captured frame (downscaled)
    * @param originalSize - Size of the original video
@@ -550,9 +563,9 @@ export class YOLOv8Detector {
     letterboxInfo: ReturnType<typeof calculateLetterbox>
   ): Detection[] {
     const dims = output.dims;
-    
+
     logger.debug(LOG_CATEGORIES.DETECTION, `Post-processing output shape: [${dims.join(', ')}], format: ${this.state.modelFormat}`);
-    
+
     // Auto-detect format based on output shape
     if (this.state.modelFormat === 'end2end' || (dims.length === 3 && dims[2] === 6)) {
       return this.postprocessEnd2End(output, captureSize, originalSize, letterboxInfo);
@@ -585,13 +598,19 @@ export class YOLOv8Detector {
   }
 
   /**
-   * Calculate Intersection over Union
+   * Calculate Intersection over Union.
+   *
+   * Bug 2 fix: BoundingBox is stored in top-left format { x, y, width, height }
+   * where x/y are the top-left corner, NOT the center. The original code
+   * incorrectly subtracted half-width/height, treating x/y as center coords,
+   * which produced wrong intersection areas and allowed duplicate detections
+   * to survive NMS.
    */
   private iou(a: BoundingBox, b: BoundingBox): number {
-    const x1 = Math.max(a.x - a.width / 2, b.x - b.width / 2);
-    const y1 = Math.max(a.y - a.height / 2, b.y - b.height / 2);
-    const x2 = Math.min(a.x + a.width / 2, b.x + b.width / 2);
-    const y2 = Math.min(a.y + a.height / 2, b.y + b.height / 2);
+    const x1 = Math.max(a.x, b.x);
+    const y1 = Math.max(a.y, b.y);
+    const x2 = Math.min(a.x + a.width, b.x + b.width);
+    const y2 = Math.min(a.y + a.height, b.y + b.height);
 
     const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
     const union = a.width * a.height + b.width * b.height - intersection;
@@ -601,7 +620,7 @@ export class YOLOv8Detector {
 
   /**
    * Run detection on an image (real or simulated in demo mode)
-   * 
+   *
    * @param sourceId - Source identifier
    * @param imageData - Image data from captured frame
    * @param frameSize - Size of the captured frame (may be downscaled from original video)
@@ -618,7 +637,7 @@ export class YOLOv8Detector {
     // Demo mode
     if (this.state.isDemoMode) {
       await new Promise(resolve => setTimeout(resolve, 20 + Math.random() * 30));
-      
+
       const detections = this.generateSimulatedDetections(frameSize);
       const inferenceTime = performance.now() - startTime;
 
@@ -657,8 +676,6 @@ export class YOLOv8Detector {
     const output = results[this.state.outputName];
 
     // Postprocess with proper coordinate mapping
-    // frameSize is the captured (possibly downscaled) frame dimensions
-    // originalVideoSize is the original video dimensions (if different from frameSize)
     const captureSize = frameSize;
     const originalSize = originalVideoSize || frameSize;
     const detections = this.postprocess(output, captureSize, originalSize, letterboxInfo);
