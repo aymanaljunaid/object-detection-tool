@@ -2,24 +2,24 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { initWorkerClient, disposeWorkerClient, getWorkerClient } from '@/services/detectionWorkerClient';
+import { initializeDetector, disposeDetector, getDetector } from '@/services/detector';
 import { useMultiFrameCapture } from './useFrameCapture';
 import { DEFAULT_DETECTION_CONFIG } from '@/lib/constants';
 
 export function useDetectionScheduler() {
-  const detectionEnabledRef = useRef(useAppStore.getState().detectionEnabled);
-  const yoloConfigRef = useRef(useAppStore.getState().yoloConfig);
+  const detectionEnabledRef = useRef(false);
   const viewModeRef = useRef(useAppStore.getState().viewMode);
   const primarySourceIdRef = useRef(useAppStore.getState().primarySourceId);
   const sourceOrderRef = useRef(useAppStore.getState().sourceOrder);
+  const yoloConfigRef = useRef(useAppStore.getState().yoloConfig);
 
   useEffect(() => {
     return useAppStore.subscribe((state) => {
       detectionEnabledRef.current = state.detectionEnabled;
-      yoloConfigRef.current = state.yoloConfig;
       viewModeRef.current = state.viewMode;
       primarySourceIdRef.current = state.primarySourceId;
       sourceOrderRef.current = state.sourceOrder;
+      yoloConfigRef.current = state.yoloConfig;
     });
   }, []);
 
@@ -49,9 +49,9 @@ export function useDetectionScheduler() {
 
   const getSourcesToProcess = useCallback((): string[] => {
     const sources = useAppStore.getState().sources;
-    const sourceOrder = sourceOrderRef.current;
     const viewMode = viewModeRef.current;
     const primarySourceId = primarySourceIdRef.current;
+    const sourceOrder = sourceOrderRef.current;
 
     const eligible: string[] = [];
     for (const id of sourceOrder) {
@@ -79,8 +79,8 @@ export function useDetectionScheduler() {
     const video = videoRefsRef.current.get(sourceId);
     if (!video || video.readyState < 2 || video.videoWidth === 0) return;
 
-    const workerClient = getWorkerClient(yoloConfigRef.current);
-    if (!workerClient.isReady()) return;
+    const detector = getDetector(yoloConfigRef.current);
+    if (!detector.isReady()) return;
 
     processingRef.current.add(sourceId);
 
@@ -88,18 +88,15 @@ export function useDetectionScheduler() {
       const frame = captureFrame(sourceId, video);
       if (!frame) return;
 
-      const imgData = getImageData(sourceId);
-      if (!imgData) return;
+      const imageData = getImageData(sourceId);
+      if (!imageData) return;
 
-      // Transfer the pixel buffer to the worker — zero-copy via Transferable
-      const result = await workerClient.detect({
+      const result = await detector.detect(
         sourceId,
-        pixels: new Uint8ClampedArray(imgData.data.buffer.slice(0)),
-        capW: frame.width,
-        capH: frame.height,
-        origW: frame.originalWidth,
-        origH: frame.originalHeight,
-      });
+        imageData,
+        { width: frame.width, height: frame.height },
+        { width: frame.originalWidth, height: frame.originalHeight }
+      );
 
       const src = useAppStore.getState().sources.get(sourceId);
       if (src?.detectionEnabled && (src.status === 'playing' || src.status === 'ready')) {
@@ -162,7 +159,7 @@ export function useDetectionScheduler() {
 
   const start = useCallback(async () => {
     if (isRunningRef.current) return;
-    await initWorkerClient(yoloConfigRef.current);
+    await initializeDetector(yoloConfigRef.current);
     isRunningRef.current = true;
     lastRunRef.current = performance.now();
     rafRef.current = requestAnimationFrame((t) => loopFnRef.current?.(t));
@@ -194,7 +191,13 @@ export function useDetectionScheduler() {
 
   useEffect(() => {
     if (!DEFAULT_DETECTION_CONFIG.pauseOnHidden) return;
-    const onVis = () => { if (document.hidden) { if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } } else if (isRunningRef.current) { rafRef.current = requestAnimationFrame((t) => loopFnRef.current?.(t)); } };
+    const onVis = () => {
+      if (document.hidden) {
+        if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+      } else if (isRunningRef.current) {
+        rafRef.current = requestAnimationFrame((t) => loopFnRef.current?.(t));
+      }
+    };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
@@ -202,7 +205,7 @@ export function useDetectionScheduler() {
   useEffect(() => {
     return () => {
       stop();
-      disposeWorkerClient();
+      void disposeDetector();
     };
   }, [stop]);
 
