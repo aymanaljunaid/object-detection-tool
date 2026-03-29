@@ -1,2 +1,1 @@
-// This file is intentionally empty — the Web Worker approach was removed.
-// Detection runs via src/services/detector.ts using onnxruntime-web directly.
+// Removed — worker is now bundled by Next.js from src/workers/detectionWorker.ts
