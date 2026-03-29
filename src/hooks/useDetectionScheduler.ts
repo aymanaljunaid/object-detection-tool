@@ -12,6 +12,8 @@
  * - Bug 5 fix: faceRecognitionEnabled moved to a ref so it is NOT in
  *   runDetection's useCallback deps, preventing the RAF loop from restarting
  *   on every face-recognition state toggle.
+ * - Bug 14 fix: faceInitStarted is reset to false when faceRecognitionEnabled
+ *   becomes false, so that a subsequent re-enable can load models again.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
@@ -444,6 +446,10 @@ export function useDetectionScheduler() {
 
   useEffect(() => {
     if (!faceRecognitionEnabled) {
+      // Bug 14 fix: reset faceInitStarted when disabling so a subsequent
+      // re-enable is not permanently blocked by the guard at the top of the
+      // enabled branch below.
+      schedulerRef.current.faceInitStarted = false;
       const recognizer = getFaceRecognizer();
       recognizer.setEnabled(false);
       return;
