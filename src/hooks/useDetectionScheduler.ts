@@ -1,20 +1,4 @@
-/**
- * Detection Scheduler Hook
- * ========================
- * Manages detection scheduling for single and grid view modes.
- *
- * Fixes in this version:
- * - Improves person-to-face matching logic (IoU alone was too strict for small face boxes)
- * - Initializes face models when face recognition is enabled
- * - Syncs face recognizer enabled state reliably
- * - Preserves recognized identities on detections
- * - Adds safer per-source cleanup and clearer debug logging
- * - Bug 5 fix: faceRecognitionEnabled moved to a ref so it is NOT in
- *   runDetection's useCallback deps, preventing the RAF loop from restarting
- *   on every face-recognition state toggle.
- * - Bug 14 fix: faceInitStarted is reset to false when faceRecognitionEnabled
- *   becomes false, so that a subsequent re-enable can load models again.
- */
+'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store/appStore';
@@ -56,29 +40,28 @@ interface FaceMatchCandidate {
 }
 
 export function useDetectionScheduler() {
-  const detectionEnabled = useAppStore((state) => state.detectionEnabled);
-  const detectionConfig = useAppStore((state) => state.detectionConfig);
-  const yoloConfig = useAppStore((state) => state.yoloConfig);
-  const viewMode = useAppStore((state) => state.viewMode);
-  const primarySourceId = useAppStore((state) => state.primarySourceId);
-  const sourceOrder = useAppStore((state) => state.sourceOrder);
+  // Use individual stable refs for store values to avoid recreating callbacks
+  const detectionEnabledRef = useRef(useAppStore.getState().detectionEnabled);
+  const detectionConfigRef = useRef(useAppStore.getState().detectionConfig);
+  const yoloConfigRef = useRef(useAppStore.getState().yoloConfig);
+  const viewModeRef = useRef(useAppStore.getState().viewMode);
+  const primarySourceIdRef = useRef(useAppStore.getState().primarySourceId);
+  const sourceOrderRef = useRef(useAppStore.getState().sourceOrder);
+  const faceRecognitionEnabledRef = useRef(useAppStore.getState().faceRecognitionEnabled);
 
-  const updateDetections = useAppStore((state) => state.updateDetections);
-  const updateDetectionStatus = useAppStore((state) => state.updateDetectionStatus);
-  const updateDebugInfo = useAppStore((state) => state.updateDebugInfo);
-
-  const faceRecognitionEnabled = useAppStore((state) => state.faceRecognitionEnabled);
-
-  // Bug 5 fix: Keep faceRecognitionEnabled in a ref so runDetection can read
-  // the latest value without it appearing in the useCallback dependency array.
-  // Previously, having faceRecognitionEnabled as a dep caused runDetection to
-  // get a new identity on every toggle, which in turn caused the
-  // detectionLoopRef effect to re-run and restart the entire RAF loop,
-  // potentially dropping in-flight frames.
-  const faceRecognitionEnabledRef = useRef(faceRecognitionEnabled);
+  // Subscribe to store changes and update refs without causing re-renders
   useEffect(() => {
-    faceRecognitionEnabledRef.current = faceRecognitionEnabled;
-  }, [faceRecognitionEnabled]);
+    const unsub = useAppStore.subscribe((state) => {
+      detectionEnabledRef.current = state.detectionEnabled;
+      detectionConfigRef.current = state.detectionConfig;
+      yoloConfigRef.current = state.yoloConfig;
+      viewModeRef.current = state.viewMode;
+      primarySourceIdRef.current = state.primarySourceId;
+      sourceOrderRef.current = state.sourceOrder;
+      faceRecognitionEnabledRef.current = state.faceRecognitionEnabled;
+    });
+    return unsub;
+  }, []);
 
   const schedulerRef = useRef<SchedulerState>({
     isRunning: false,
@@ -98,7 +81,7 @@ export function useDetectionScheduler() {
   const isPausedRef = useRef<boolean>(false);
 
   const { captureFrame, getImageData, removeCapture } = useMultiFrameCapture({
-    maxDimension: detectionConfig.maxFrameDimension,
+    maxDimension: DEFAULT_DETECTION_CONFIG.maxFrameDimension,
   });
 
   const videoRefsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
@@ -106,39 +89,29 @@ export function useDetectionScheduler() {
   const registerVideoRef = useCallback((sourceId: string, video: HTMLVideoElement | null) => {
     if (video) {
       videoRefsRef.current.set(sourceId, video);
-      logger.debug(LOG_CATEGORIES.DETECTION, `[Scheduler] Registered video ref for ${sourceId}`);
     } else {
       videoRefsRef.current.delete(sourceId);
       removeCapture(sourceId);
       schedulerRef.current.lastDetectionTime.delete(sourceId);
       schedulerRef.current.lastFaceRecognitionTime.delete(sourceId);
       schedulerRef.current.processingSources.delete(sourceId);
-      logger.debug(LOG_CATEGORIES.DETECTION, `[Scheduler] Unregistered video ref for ${sourceId}`);
     }
   }, [removeCapture]);
 
   const getSourceEligibility = useCallback((source: SourceWithState | undefined): { eligible: boolean; reason: string } => {
-    if (!source) {
-      return { eligible: false, reason: 'source not found' };
-    }
-
-    if (!source.detectionEnabled) {
-      return { eligible: false, reason: 'detection disabled for this source' };
-    }
-
-    if (source.status !== 'playing' && source.status !== 'ready') {
-      return { eligible: false, reason: `status is '${source.status}' (need 'playing' or 'ready')` };
-    }
-
-    if (source.error) {
-      return { eligible: false, reason: `source has error: ${source.error}` };
-    }
-
+    if (!source) return { eligible: false, reason: 'source not found' };
+    if (!source.detectionEnabled) return { eligible: false, reason: 'detection disabled for this source' };
+    if (source.status !== 'playing' && source.status !== 'ready') return { eligible: false, reason: `status is '${source.status}'` };
+    if (source.error) return { eligible: false, reason: `source has error: ${source.error}` };
     return { eligible: true, reason: 'eligible' };
   }, []);
 
   const getSourcesToDetect = useCallback((): string[] => {
     const sources = useAppStore.getState().sources;
+    const sourceOrder = sourceOrderRef.current;
+    const viewMode = viewModeRef.current;
+    const primarySourceId = primarySourceIdRef.current;
+    const enableRotation = detectionConfigRef.current.enableRotation;
     const results: { id: string; eligible: boolean; reason: string }[] = [];
 
     sourceOrder.forEach((id) => {
@@ -153,13 +126,6 @@ export function useDetectionScheduler() {
     const statusStr = results.map((r) => `${r.id}:${r.eligible ? 'yes' : r.reason}`).join(',');
     if (statusStr !== state.lastLoggedSources) {
       state.lastLoggedSources = statusStr;
-      logger.info(LOG_CATEGORIES.DETECTION, '[Scheduler] Source eligibility check:');
-      results.forEach((r) => {
-        logger.info(
-          LOG_CATEGORIES.DETECTION,
-          `  - ${r.id}: ${r.eligible ? 'ELIGIBLE' : `SKIPPED (${r.reason})`}`
-        );
-      });
     }
 
     if (viewMode === 'single' && primarySourceId) {
@@ -168,57 +134,33 @@ export function useDetectionScheduler() {
     }
 
     const eligibleIds = eligibleSources.map((r) => r.id);
-    if (detectionConfig.enableRotation && eligibleIds.length > 1) {
+    if (enableRotation && eligibleIds.length > 1) {
       const index = state.currentSourceIndex % eligibleIds.length;
       return [eligibleIds[index]];
     }
 
     return eligibleIds;
-  }, [viewMode, primarySourceId, sourceOrder, detectionConfig.enableRotation, getSourceEligibility]);
+  }, [getSourceEligibility]);
 
   const runDetection = useCallback(async (sourceId: string): Promise<void> => {
     const state = schedulerRef.current;
 
-    if (state.processingSources.has(sourceId)) {
-      logger.debug(LOG_CATEGORIES.DETECTION, `[Scheduler] Skipping ${sourceId} - already processing`);
-      return;
-    }
+    if (state.processingSources.has(sourceId)) return;
 
     const video = videoRefsRef.current.get(sourceId);
-    if (!video) {
-      logger.debug(LOG_CATEGORIES.DETECTION, `[Scheduler] No video ref for ${sourceId}`);
-      return;
-    }
-
-    if (video.readyState < 2) {
-      logger.debug(
-        LOG_CATEGORIES.DETECTION,
-        `[Scheduler] Video not ready for ${sourceId} (readyState: ${video.readyState})`
-      );
-      return;
-    }
+    if (!video || video.readyState < 2) return;
 
     const detector = getDetector();
-    if (!detector.isReady()) {
-      logger.warn(LOG_CATEGORIES.DETECTION, `[Scheduler] Detector not ready for ${sourceId}`);
-      return;
-    }
+    if (!detector.isReady()) return;
 
     state.processingSources.add(sourceId);
-    logger.debug(LOG_CATEGORIES.DETECTION, `[Scheduler] Starting detection for ${sourceId}`);
 
     try {
       const frame = captureFrame(sourceId, video);
-      if (!frame) {
-        logger.warn(LOG_CATEGORIES.DETECTION, `[Scheduler] Failed to capture frame for ${sourceId}`);
-        return;
-      }
+      if (!frame) return;
 
       const imageData = getImageData(sourceId);
-      if (!imageData) {
-        logger.warn(LOG_CATEGORIES.DETECTION, `[Scheduler] Failed to get image data for ${sourceId}`);
-        return;
-      }
+      if (!imageData) return;
 
       const result = await detector.detect(
         sourceId,
@@ -227,12 +169,8 @@ export function useDetectionScheduler() {
         { width: frame.originalWidth, height: frame.originalHeight }
       );
 
-      // Read face recognition toggle from ref (not closure) to avoid stale value
-      // and to prevent runDetection from being recreated on every toggle.
       if (faceRecognitionEnabledRef.current) {
         const faceRecognizer = getFaceRecognizer();
-
-        // Keep recognizer state in sync with app state.
         faceRecognizer.setEnabled(true);
 
         if (faceRecognizer.isReady()) {
@@ -241,28 +179,16 @@ export function useDetectionScheduler() {
 
           if (now - lastFaceTime >= 500) {
             state.lastFaceRecognitionTime.set(sourceId, now);
-
             const personDetections = result.detections.filter((d) => d.className === 'person');
-
-            logger.debug(
-              LOG_CATEGORIES.DETECTION,
-              `[FaceRecognition] Processing ${sourceId}: ${personDetections.length} person detections`
-            );
 
             if (personDetections.length > 0 && video.readyState >= 2) {
               try {
                 const faceResults = await faceRecognizer.recognizeFaces(video, sourceId);
 
-                logger.debug(
-                  LOG_CATEGORIES.DETECTION,
-                  `[FaceRecognition] Detected ${faceResults.length} faces, ${faceResults.filter((f) => f.identityName).length} recognized`
-                );
-
                 result.detections = result.detections.map((det) => {
                   if (det.className !== 'person') return det;
 
                   const personBox = yoloBoxToPixelBox(det, frame.originalWidth, frame.originalHeight);
-
                   let bestMatch: FaceMatchCandidate | null = null;
 
                   for (const face of faceResults) {
@@ -271,10 +197,7 @@ export function useDetectionScheduler() {
                     const overlap = calculateOverlap(personBox, face.box);
                     const faceInsidePerson = isBoxMostlyInside(face.box, personBox, 0.6);
                     const faceCenterInsidePerson = isPointInsideBox(
-                      {
-                        x: face.box.x + face.box.width / 2,
-                        y: face.box.y + face.box.height / 2,
-                      },
+                      { x: face.box.x + face.box.width / 2, y: face.box.y + face.box.height / 2 },
                       personBox
                     );
 
@@ -285,11 +208,6 @@ export function useDetectionScheduler() {
                       overlap * 2.0 +
                       recognitionBonus * 1.5 +
                       face.confidence * 1.5;
-
-                    logger.debug(
-                      LOG_CATEGORIES.DETECTION,
-                      `[FaceRecognition] Matching person=${JSON.stringify(personBox)} face=${JSON.stringify(face.box)} overlap=${overlap.toFixed(3)} centerInside=${faceCenterInsidePerson} inside=${faceInsidePerson} name=${face.identityName ?? 'unknown'} confidence=${face.confidence.toFixed(2)} score=${score.toFixed(3)}`
-                    );
 
                     const candidate: FaceMatchCandidate = {
                       identityId: face.identityId,
@@ -306,17 +224,7 @@ export function useDetectionScheduler() {
                     }
                   }
 
-                  if (
-                    bestMatch &&
-                    bestMatch.identityName &&
-                    bestMatch.faceCenterInsidePerson &&
-                    bestMatch.confidence >= 0.35
-                  ) {
-                    logger.info(
-                      LOG_CATEGORIES.DETECTION,
-                      `[FaceRecognition] MATCHED: "${bestMatch.identityName}" to person (score=${bestMatch.score.toFixed(3)}, overlap=${bestMatch.overlap.toFixed(3)}, confidence=${bestMatch.confidence.toFixed(2)})`
-                    );
-
+                  if (bestMatch && bestMatch.identityName && bestMatch.faceCenterInsidePerson && bestMatch.confidence >= 0.35) {
                     return {
                       ...det,
                       faceRecognition: {
@@ -327,51 +235,19 @@ export function useDetectionScheduler() {
                     };
                   }
 
-                  if (bestMatch) {
-                    logger.debug(
-                      LOG_CATEGORIES.DETECTION,
-                      `[FaceRecognition] Best face for person was not confident enough: name=${bestMatch.identityName ?? 'unknown'} confidence=${bestMatch.confidence.toFixed(2)} score=${bestMatch.score.toFixed(3)}`
-                    );
-                  }
-
-                  return {
-                    ...det,
-                    faceRecognition: undefined,
-                  };
+                  return { ...det, faceRecognition: undefined };
                 });
-
-                logger.debug(
-                  LOG_CATEGORIES.DETECTION,
-                  `[FaceRecognition] Complete for ${sourceId}: ${result.detections.filter((d) => d.faceRecognition?.identityName).length} persons identified`
-                );
               } catch (error) {
-                logger.warn(
-                  LOG_CATEGORIES.DETECTION,
-                  `[FaceRecognition] Failed for ${sourceId}`,
-                  error
-                );
+                logger.warn(LOG_CATEGORIES.DETECTION, `[FaceRecognition] Failed for ${sourceId}`, error);
               }
             }
           }
-        } else {
-          logger.debug(
-            LOG_CATEGORIES.DETECTION,
-            `[FaceRecognition] Recognizer not ready for ${sourceId}`
-          );
         }
       }
 
       const currentSource = useAppStore.getState().sources.get(sourceId);
-      if (
-        currentSource?.detectionEnabled &&
-        (currentSource.status === 'playing' || currentSource.status === 'ready')
-      ) {
-        updateDetections(sourceId, result);
-
-        logger.debug(
-          LOG_CATEGORIES.DETECTION,
-          `[Scheduler] Detection complete for ${sourceId}: ${result.detections.length} objects in ${result.inferenceTime.toFixed(1)}ms`
-        );
+      if (currentSource?.detectionEnabled && (currentSource.status === 'playing' || currentSource.status === 'ready')) {
+        useAppStore.getState().updateDetections(sourceId, result);
       }
 
       state.frameCount += 1;
@@ -381,20 +257,17 @@ export function useDetectionScheduler() {
     } finally {
       state.processingSources.delete(sourceId);
     }
-  // faceRecognitionEnabled intentionally omitted — read via ref to avoid
-  // restarting the RAF loop on every toggle (Bug 5).
-  }, [captureFrame, getImageData, updateDetections]);
+  }, [captureFrame, getImageData]);
 
-  const detectionLoopRef = useRef<((timestamp: number) => void) | null>(null);
+  // Single stable RAF loop — never recreated
+  const loopFnRef = useRef<((timestamp: number) => void) | null>(null);
 
   useEffect(() => {
-    detectionLoopRef.current = (timestamp: number) => {
+    loopFnRef.current = (timestamp: number) => {
       const state = schedulerRef.current;
+      if (!state.isRunning || isPausedRef.current) return;
 
-      if (!state.isRunning || isPausedRef.current) {
-        return;
-      }
-
+      const viewMode = viewModeRef.current;
       const targetFPS = viewMode === 'single'
         ? DEFAULT_DETECTION_CONFIG.singleModeTargetFPS
         : DEFAULT_DETECTION_CONFIG.gridModeTargetFPS;
@@ -402,13 +275,13 @@ export function useDetectionScheduler() {
 
       const elapsed = timestamp - lastRunRef.current;
       if (elapsed < targetInterval) {
-        rafRef.current = requestAnimationFrame((ts) => detectionLoopRef.current?.(ts));
+        rafRef.current = requestAnimationFrame((ts) => loopFnRef.current?.(ts));
         return;
       }
 
       const sourcesToDetect = getSourcesToDetect();
-
       const now = performance.now();
+
       const sourcesReady = sourcesToDetect.filter((sourceId) => {
         const lastTime = state.lastDetectionTime.get(sourceId) || 0;
         return now - lastTime >= DEFAULT_DETECTION_CONFIG.minDetectionInterval;
@@ -420,18 +293,15 @@ export function useDetectionScheduler() {
         void runDetection(sourceToProcess);
         lastRunRef.current = timestamp;
 
-        if (detectionConfig.enableRotation && viewMode === 'grid') {
+        if (detectionConfigRef.current.enableRotation && viewMode === 'grid') {
           state.currentSourceIndex += 1;
         }
       }
 
-      if (now - state.lastDebugUpdate >= 1000) {
+      if (now - state.lastDebugUpdate >= 2000) {
         state.lastDebugUpdate = now;
-        const avgInferenceTime = state.frameCount > 0
-          ? state.totalInferenceTime / state.frameCount
-          : 0;
-
-        updateDebugInfo({
+        const avgInferenceTime = state.frameCount > 0 ? state.totalInferenceTime / state.frameCount : 0;
+        useAppStore.getState().updateDebugInfo({
           activeSources: sourcesToDetect.length,
           activeDetections: state.processingSources.size,
           totalInferenceTime: state.totalInferenceTime,
@@ -440,69 +310,76 @@ export function useDetectionScheduler() {
         });
       }
 
-      rafRef.current = requestAnimationFrame((ts) => detectionLoopRef.current?.(ts));
+      rafRef.current = requestAnimationFrame((ts) => loopFnRef.current?.(ts));
     };
-  }, [viewMode, getSourcesToDetect, runDetection, detectionConfig.enableRotation, updateDebugInfo]);
+  }, [getSourcesToDetect, runDetection]);
 
   useEffect(() => {
-    if (!faceRecognitionEnabled) {
-      // Bug 14 fix: reset faceInitStarted when disabling so a subsequent
-      // re-enable is not permanently blocked by the guard at the top of the
-      // enabled branch below.
-      schedulerRef.current.faceInitStarted = false;
-      const recognizer = getFaceRecognizer();
-      recognizer.setEnabled(false);
+    if (!faceRecognitionEnabledRef.current) {
       return;
     }
-
     const state = schedulerRef.current;
-    if (state.faceInitStarted) {
-      return;
-    }
-
+    if (state.faceInitStarted) return;
     state.faceInitStarted = true;
-
     const recognizer = getFaceRecognizer();
     recognizer.setEnabled(true);
-
     recognizer.loadModels()
       .then(async () => {
         if ('forceRefreshKnownEmbeddings' in recognizer && typeof recognizer.forceRefreshKnownEmbeddings === 'function') {
           await recognizer.forceRefreshKnownEmbeddings();
         }
-        logger.info(LOG_CATEGORIES.DETECTION, '[FaceRecognition] Models initialized from scheduler');
       })
       .catch((error) => {
-        logger.warn(LOG_CATEGORIES.DETECTION, '[FaceRecognition] Failed to initialize models from scheduler', error);
+        logger.warn(LOG_CATEGORIES.DETECTION, '[FaceRecognition] Failed to initialize models', error);
       })
       .finally(() => {
         schedulerRef.current.faceInitStarted = false;
       });
-  }, [faceRecognitionEnabled]);
+  }, []);
+
+  // Watch faceRecognitionEnabled via subscription, not hook deps
+  useEffect(() => {
+    const unsub = useAppStore.subscribe(
+      (state) => state.faceRecognitionEnabled,
+      (enabled) => {
+        if (!enabled) {
+          schedulerRef.current.faceInitStarted = false;
+          getFaceRecognizer().setEnabled(false);
+        } else {
+          const state = schedulerRef.current;
+          if (state.faceInitStarted) return;
+          state.faceInitStarted = true;
+          const recognizer = getFaceRecognizer();
+          recognizer.setEnabled(true);
+          recognizer.loadModels()
+            .then(async () => {
+              if ('forceRefreshKnownEmbeddings' in recognizer && typeof recognizer.forceRefreshKnownEmbeddings === 'function') {
+                await recognizer.forceRefreshKnownEmbeddings();
+              }
+            })
+            .catch(() => {})
+            .finally(() => { schedulerRef.current.faceInitStarted = false; });
+        }
+      }
+    );
+    return unsub;
+  }, []);
 
   const start = useCallback(async () => {
-    if (schedulerRef.current.isRunning) {
-      logger.debug(LOG_CATEGORIES.DETECTION, '[Scheduler] Already running, skipping start');
-      return;
-    }
+    if (schedulerRef.current.isRunning) return;
 
-    logger.info(LOG_CATEGORIES.DETECTION, '[Scheduler] Starting detection scheduler...');
+    logger.info(LOG_CATEGORIES.DETECTION, '[Scheduler] Starting...');
 
     try {
-      const detector = await initializeDetector(yoloConfig);
-
+      const detector = await initializeDetector(yoloConfigRef.current);
       if (!detector.isReady()) {
-        logger.error(LOG_CATEGORIES.DETECTION, '[Scheduler] Detector not ready after initialization');
+        logger.error(LOG_CATEGORIES.DETECTION, '[Scheduler] Detector not ready after init');
         return;
       }
 
-      logger.info(
-        LOG_CATEGORIES.DETECTION,
-        `[Scheduler] Detector ready. Demo mode: ${detector.isDemoMode()}`
-      );
-
       const sources = useAppStore.getState().sources;
-      sourceOrder.forEach((sourceId) => {
+      const { updateDetectionStatus } = useAppStore.getState();
+      sourceOrderRef.current.forEach((sourceId) => {
         const source = sources.get(sourceId);
         const { eligible } = getSourceEligibility(source);
         updateDetectionStatus(sourceId, eligible ? 'active' : 'inactive');
@@ -510,22 +387,18 @@ export function useDetectionScheduler() {
 
       schedulerRef.current.isRunning = true;
       lastRunRef.current = performance.now();
+      rafRef.current = requestAnimationFrame((ts) => loopFnRef.current?.(ts));
 
-      rafRef.current = requestAnimationFrame((ts) => detectionLoopRef.current?.(ts));
-
-      logger.info(LOG_CATEGORIES.DETECTION, '[Scheduler] Detection scheduler started successfully');
+      logger.info(LOG_CATEGORIES.DETECTION, '[Scheduler] Started');
     } catch (error) {
-      logger.error(LOG_CATEGORIES.DETECTION, '[Scheduler] Failed to start detector', error);
-
-      sourceOrder.forEach((sourceId) => {
-        updateDetectionStatus(sourceId, 'error');
-      });
+      logger.error(LOG_CATEGORIES.DETECTION, '[Scheduler] Failed to start', error);
+      const { updateDetectionStatus } = useAppStore.getState();
+      sourceOrderRef.current.forEach((sourceId) => updateDetectionStatus(sourceId, 'error'));
     }
-  }, [yoloConfig, sourceOrder, updateDetectionStatus, getSourceEligibility]);
+  }, [getSourceEligibility]);
 
   const stop = useCallback(() => {
-    logger.info(LOG_CATEGORIES.DETECTION, '[Scheduler] Stopping detection scheduler');
-
+    logger.info(LOG_CATEGORIES.DETECTION, '[Scheduler] Stopping');
     schedulerRef.current.isRunning = false;
 
     if (rafRef.current !== null) {
@@ -533,78 +406,59 @@ export function useDetectionScheduler() {
       rafRef.current = null;
     }
 
-    sourceOrder.forEach((sourceId) => {
-      updateDetectionStatus(sourceId, 'inactive');
-    });
-
+    const { updateDetectionStatus } = useAppStore.getState();
+    sourceOrderRef.current.forEach((sourceId) => updateDetectionStatus(sourceId, 'inactive'));
     schedulerRef.current.processingSources.clear();
-  }, [sourceOrder, updateDetectionStatus]);
-
-  const pause = useCallback(() => {
-    isPausedRef.current = true;
-    logger.debug(LOG_CATEGORIES.DETECTION, '[Scheduler] Detection paused');
   }, []);
 
-  const resume = useCallback(() => {
-    isPausedRef.current = false;
-    logger.debug(LOG_CATEGORIES.DETECTION, '[Scheduler] Detection resumed');
-  }, []);
+  const pause = useCallback(() => { isPausedRef.current = true; }, []);
+  const resume = useCallback(() => { isPausedRef.current = false; }, []);
 
+  // React to detectionEnabled changes via subscription
   useEffect(() => {
-    if (detectionEnabled) {
+    const unsub = useAppStore.subscribe(
+      (state) => state.detectionEnabled,
+      (enabled) => {
+        if (enabled) {
+          void start();
+        } else {
+          stop();
+        }
+      }
+    );
+
+    // Start if already enabled
+    if (useAppStore.getState().detectionEnabled) {
       void start();
-    } else {
-      stop();
     }
 
     return () => {
+      unsub();
       stop();
     };
-  }, [detectionEnabled, start, stop]);
+  }, [start, stop]);
 
   useEffect(() => {
-    if (!detectionConfig.pauseOnHidden) {
-      return;
-    }
+    if (!DEFAULT_DETECTION_CONFIG.pauseOnHidden) return;
 
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        pause();
-      } else {
-        resume();
-      }
+      if (document.hidden) { pause(); } else { resume(); }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [detectionConfig.pauseOnHidden, pause, resume]);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [pause, resume]);
 
   useEffect(() => {
     return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-      }
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
   }, []);
 
-  return {
-    registerVideoRef,
-    start,
-    stop,
-    pause,
-    resume,
-    isRunning: () => schedulerRef.current.isRunning,
-  };
+  return { registerVideoRef, start, stop, pause, resume, isRunning: () => schedulerRef.current.isRunning };
 }
 
-function yoloBoxToPixelBox(
-  det: Detection,
-  width: number,
-  height: number
-): PixelBox {
+function yoloBoxToPixelBox(det: Detection, width: number, height: number): PixelBox {
   return {
     x: (det.bbox.x - det.bbox.width / 2) * width,
     y: (det.bbox.y - det.bbox.height / 2) * height,
@@ -613,16 +467,8 @@ function yoloBoxToPixelBox(
   };
 }
 
-function isPointInsideBox(
-  point: { x: number; y: number },
-  box: PixelBox
-): boolean {
-  return (
-    point.x >= box.x &&
-    point.x <= box.x + box.width &&
-    point.y >= box.y &&
-    point.y <= box.y + box.height
-  );
+function isPointInsideBox(point: { x: number; y: number }, box: PixelBox): boolean {
+  return point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height;
 }
 
 function intersectionArea(a: PixelBox, b: PixelBox): number {
@@ -630,41 +476,26 @@ function intersectionArea(a: PixelBox, b: PixelBox): number {
   const y1 = Math.max(a.y, b.y);
   const x2 = Math.min(a.x + a.width, b.x + b.width);
   const y2 = Math.min(a.y + a.height, b.y + b.height);
-
   if (x2 <= x1 || y2 <= y1) return 0;
   return (x2 - x1) * (y2 - y1);
 }
 
-function isBoxMostlyInside(
-  inner: PixelBox,
-  outer: PixelBox,
-  minCoverage: number
-): boolean {
+function isBoxMostlyInside(inner: PixelBox, outer: PixelBox, minCoverage: number): boolean {
   const inter = intersectionArea(inner, outer);
   const innerArea = inner.width * inner.height;
   if (innerArea <= 0) return false;
   return inter / innerArea >= minCoverage;
 }
 
-/**
- * IoU between two boxes.
- * Note: for person-vs-face matching this is usually small, so we only use it as one weak signal.
- */
-function calculateOverlap(
-  box1: PixelBox,
-  box2: PixelBox
-): number {
+function calculateOverlap(box1: PixelBox, box2: PixelBox): number {
   const x1 = Math.max(box1.x, box2.x);
   const y1 = Math.max(box1.y, box2.y);
   const x2 = Math.min(box1.x + box1.width, box2.x + box2.width);
   const y2 = Math.min(box1.y + box1.height, box2.y + box2.height);
-
   if (x2 <= x1 || y2 <= y1) return 0;
-
   const intersection = (x2 - x1) * (y2 - y1);
   const area1 = box1.width * box1.height;
   const area2 = box2.width * box2.height;
   const union = area1 + area2 - intersection;
-
   return union > 0 ? intersection / union : 0;
 }
