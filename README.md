@@ -1,5 +1,7 @@
 # Object Detection Tool
 
+![Object Detection Tool README Banner](./public/screenshots/readme-banner.png)
+
 A real-time, multi-source object detection web application powered by **YOLOv8** (via ONNX Runtime Web) running entirely in the browser. Supports multiple live and recorded video sources simultaneously with a detection overlay, face recognition, and an interactive dashboard UI.
 
 ![Tech Stack](https://img.shields.io/badge/Next.js-16-black?logo=next.js) ![React](https://img.shields.io/badge/React-19-blue?logo=react) ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript) ![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4-38bdf8?logo=tailwindcss)
