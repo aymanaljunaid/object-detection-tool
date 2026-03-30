@@ -13,7 +13,7 @@
 import { useRef, useCallback } from 'react';
 import { logger, LOG_CATEGORIES } from '@/lib/utils/logger';
 import { calculateScaledDimensions } from '@/lib/utils/coordinates';
-import type { Dimensions, CapturedFrame, FrameCaptureOptions } from '@/types';
+import type { CapturedFrame, FrameCaptureOptions } from '@/types';
 
 const DEFAULT_OPTIONS: FrameCaptureOptions = {
   maxDimension: 320,

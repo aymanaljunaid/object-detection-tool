@@ -7,7 +7,7 @@
 
 'use client';
 
-import React, { useState, useCallback, memo } from 'react';
+import { useState, useCallback, memo } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,14 +50,12 @@ import {
   Upload,
   Webcam,
   Link,
-  AlertCircle,
   Loader2,
   Eye,
   EyeOff,
 } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import type { SourceType, SourceConfig, NewSourceConfig } from '@/types';
+import type { SourceType, NewSourceConfig } from '@/types';
 
 // ============================================================================
 // TYPES
@@ -115,7 +113,6 @@ const SourceItem = memo(function SourceItem({
 
   const config = source.config;
   const status = source.status;
-  const error = source.error;
   const detectionEnabled = source.detectionEnabled;
 
   const getSourceTypeIcon = () => {

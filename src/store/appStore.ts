@@ -222,10 +222,12 @@ export const useAppStore = create<AppState & AppActions>()(
         if (!source) return state;
         const newSources = new Map(state.sources);
         const existingPlayback = source.playbackState;
+        // Type assertion needed because stateUpdates is partial but we merge with complete object
         const newPlayback: PlaybackState = existingPlayback
-          ? { ...existingPlayback, ...stateUpdates }
+          ? { ...existingPlayback, ...stateUpdates } as PlaybackState
           : {
               sourceId: id,
+              status: 'idle' as const,
               currentTime: 0,
               duration: 0,
               volume: 1,
@@ -233,8 +235,9 @@ export const useAppStore = create<AppState & AppActions>()(
               playbackRate: 1,
               isLive: false,
               buffered: null,
+              error: null,
               ...stateUpdates,
-            };
+            } as PlaybackState;
         newSources.set(id, { ...source, playbackState: newPlayback });
         return { sources: newSources };
       });

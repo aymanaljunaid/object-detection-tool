@@ -6,6 +6,8 @@ import { initWorkerClient, disposeWorkerClient, getWorkerClient } from '@/servic
 import { useMultiFrameCapture } from './useFrameCapture';
 import { DEFAULT_DETECTION_CONFIG } from '@/lib/constants';
 import { overlayBus } from '@/lib/overlayBus';
+import { logger, LOG_CATEGORIES } from '@/lib/utils/logger';
+import { useFaceRecognition } from './useFaceRecognition';
 
 export function useDetectionScheduler() {
   const viewModeRef = useRef(useAppStore.getState().viewMode);
@@ -30,10 +32,16 @@ export function useDetectionScheduler() {
   const processingRef = useRef<Set<string>>(new Set());
   const videoRefsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const lastDebugUpdateRef = useRef(0);
+  const totalInferenceTimeRef = useRef(0);
+  const completedDetectionsRef = useRef(0);
+  const schedulerStartedAtRef = useRef(0);
 
   const { captureFrame, getImageData, removeCapture } = useMultiFrameCapture({
     maxDimension: DEFAULT_DETECTION_CONFIG.maxFrameDimension,
   });
+
+  // Face recognition hook
+  const { processFaceRecognition, isReady: faceRecognitionReady } = useFaceRecognition();
 
   const registerVideoRef = useCallback((sourceId: string, video: HTMLVideoElement | null) => {
     if (video) {
@@ -89,6 +97,7 @@ export function useDetectionScheduler() {
 
       const imageData = getImageData(sourceId);
       if (!imageData) return;
+      const captureTimestamp = performance.now();
 
       const result = await workerClient.detect({
         sourceId,
@@ -100,20 +109,59 @@ export function useDetectionScheduler() {
         config: yoloConfigRef.current,
       });
 
+      // Process face recognition on person detections if enabled
+      let finalDetections = result.detections;
+      if (faceRecognitionReady && result.detections.some(d => d.className === 'person')) {
+        try {
+          finalDetections = await processFaceRecognition(
+            sourceId,
+            video,
+            result.detections,
+            frame.width,
+            frame.height
+          );
+        } catch (faceError) {
+          // Don't let face recognition errors break the detection pipeline
+          logger.warn(
+            LOG_CATEGORIES.DETECTION,
+            `Face recognition failed for ${sourceId}, using original detections`,
+            faceError
+          );
+        }
+      }
+
+      // Create updated result with face recognition data
+      const finalResult = { ...result, detections: finalDetections };
+
       // Paint overlay immediately — bypasses Zustand->React re-render lag
-      overlayBus.emit(sourceId, result);
+      overlayBus.emit(sourceId, finalResult);
 
       // Update store for sidebar stats (non-visual, no urgency)
       const src = useAppStore.getState().sources.get(sourceId);
       if (src?.detectionEnabled && (src.status === 'playing' || src.status === 'ready')) {
-        useAppStore.getState().updateDetections(sourceId, result);
+        useAppStore.getState().updateDetections(sourceId, finalResult);
       }
-    } catch {
-      // ignore per-frame errors
+
+      totalInferenceTimeRef.current += result.inferenceTime;
+      completedDetectionsRef.current += 1;
+      const elapsedMs = Math.max(1, performance.now() - schedulerStartedAtRef.current);
+      useAppStore.getState().updateDebugInfo({
+        totalInferenceTime: totalInferenceTimeRef.current,
+        averageFPS: (completedDetectionsRef.current * 1000) / elapsedMs,
+        lastFrameCapture: captureTimestamp,
+        activeDetections: processingRef.current.size,
+      });
+    } catch (error) {
+      // Log detection errors for debugging - don't silently fail
+      logger.error(
+        LOG_CATEGORIES.DETECTION,
+        `Detection failed for source ${sourceId}`,
+        error instanceof Error ? error : String(error)
+      );
     } finally {
       processingRef.current.delete(sourceId);
     }
-  }, [captureFrame, getImageData]);
+  }, [captureFrame, getImageData, faceRecognitionReady, processFaceRecognition]);
 
   const loopFnRef = useRef<((ts: number) => void) | null>(null);
 
@@ -165,8 +213,17 @@ export function useDetectionScheduler() {
     if (isRunningRef.current) return;
     await initWorkerClient(yoloConfigRef.current);
     isRunningRef.current = true;
+    schedulerStartedAtRef.current = performance.now();
+    totalInferenceTimeRef.current = 0;
+    completedDetectionsRef.current = 0;
     lastRunRef.current = performance.now();
     rafRef.current = requestAnimationFrame(t => loopFnRef.current!(t));
+    useAppStore.getState().updateDebugInfo({
+      totalInferenceTime: 0,
+      averageFPS: 0,
+      lastFrameCapture: 0,
+      activeDetections: 0,
+    });
     const { updateDetectionStatus, sources, sourceOrder } = useAppStore.getState();
     for (const id of sourceOrder) {
       const s = sources.get(id);
@@ -178,6 +235,15 @@ export function useDetectionScheduler() {
     isRunningRef.current = false;
     if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     processingRef.current.clear();
+    totalInferenceTimeRef.current = 0;
+    completedDetectionsRef.current = 0;
+    schedulerStartedAtRef.current = 0;
+    useAppStore.getState().updateDebugInfo({
+      activeDetections: 0,
+      totalInferenceTime: 0,
+      averageFPS: 0,
+      lastFrameCapture: 0,
+    });
     const { updateDetectionStatus, sourceOrder } = useAppStore.getState();
     for (const id of sourceOrder) updateDetectionStatus(id, 'inactive');
   }, []);

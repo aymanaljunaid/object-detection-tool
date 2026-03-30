@@ -123,12 +123,13 @@ export interface Dimensions {
 
 /**
  * Bounding box in normalized coordinates [0, 1]
+ * Coordinates are in top-left format (x,y is the top-left corner, not center)
  */
 export interface BoundingBox {
-  x: number; // Center X (normalized)
-  y: number; // Center Y (normalized)
-  width: number; // Width (normalized)
-  height: number; // Height (normalized)
+  x: number; // Top-left X (normalized, 0-1)
+  y: number; // Top-left Y (normalized, 0-1)
+  width: number; // Width (normalized, 0-1)
+  height: number; // Height (normalized, 0-1)
 }
 
 /**

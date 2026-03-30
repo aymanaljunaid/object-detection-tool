@@ -13,7 +13,7 @@
 
 'use client';
 
-import React, {
+import {
   memo,
   useState,
   useCallback,
@@ -23,7 +23,6 @@ import React, {
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -63,14 +62,12 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import type { FaceIdentity } from '@/types/face';
 import {
   createIdentity,
   addSample,
   deleteIdentity,
   updateIdentityName,
   getAllIdentities,
-  getIdentityCount,
 } from '@/lib/faceStorage';
 import { getFaceRecognizer } from '@/services/faceRecognizer';
 import { toast } from '@/hooks/use-toast';
@@ -99,7 +96,6 @@ export const FaceMemoryPanel = memo(function FaceMemoryPanel({
   // Store state
   const knownFaces = useAppStore((state) => state.knownFaces);
   const setKnownFaces = useAppStore((state) => state.setKnownFaces);
-  const faceRecognitionStatus = useAppStore((state) => state.faceRecognitionStatus);
 
   // Local state
   const [isEnrollmentOpen, setIsEnrollmentOpen] = useState(false);
@@ -459,7 +455,6 @@ export const FaceMemoryPanel = memo(function FaceMemoryPanel({
                       {/* Thumbnail */}
                       <div className="w-10 h-10 rounded-full overflow-hidden bg-muted flex-shrink-0">
                         {face.samples[0]?.thumbnail ? (
-                          // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={face.samples[0].thumbnail}
                             alt={face.name}

@@ -162,17 +162,3 @@ export const DEBUG_CONFIG = {
   // Memory monitoring interval (ms)
   memoryMonitorInterval: 5000,
 } as const;
-
-// ============================================================================
-// INDEXED DB CONFIGURATION
-// ============================================================================
-
-export const DB_CONFIG = {
-  dbName: 'detection-app-db',
-  dbVersion: 1,
-  stores: {
-    sources: 'sources',
-    detections: 'detections',
-    settings: 'settings',
-  },
-} as const;

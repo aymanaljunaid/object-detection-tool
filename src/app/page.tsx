@@ -12,14 +12,13 @@
 
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { MultiCameraGrid } from '@/components/camera/MultiCameraGrid';
 import { SourceManagerPanel } from '@/components/panels/SourceManagerPanel';
 import { DetectionControlPanel } from '@/components/panels/DetectionControlPanel';
 import { FaceMemoryPanel } from '@/components/panels/FaceMemoryPanel';
 import { DebugPanel } from '@/components/panels/DebugPanel';
-import { useDetectionScheduler } from '@/hooks/useDetectionScheduler';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
@@ -37,7 +36,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getDetector } from '@/services/detector';
+import { getWorkerClient } from '@/services/detectionWorkerClient';
 
 export default function HomePage() {
   // Store state
@@ -49,16 +48,13 @@ export default function HomePage() {
   const toggleSourcePanel = useAppStore((state) => state.toggleSourcePanel);
   const toggleDebugPanel = useAppStore((state) => state.toggleDebugPanel);
 
-  // Detection scheduler
-  const { registerVideoRef } = useDetectionScheduler();
-
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState(true);
 
   // Demo mode state - check on initial render and when detection changes
   const [isDemoMode, setIsDemoMode] = useState(() => {
     if (typeof window !== 'undefined') {
-      return getDetector().isDemoMode();
+      return getWorkerClient().isDemoMode();
     }
     return false;
   });
@@ -68,7 +64,7 @@ export default function HomePage() {
     if (detectionEnabled) {
       // Use setTimeout to avoid synchronous setState in effect
       const timer = setTimeout(() => {
-        setIsDemoMode(getDetector().isDemoMode());
+        setIsDemoMode(getWorkerClient().isDemoMode());
       }, 0);
       return () => clearTimeout(timer);
     }

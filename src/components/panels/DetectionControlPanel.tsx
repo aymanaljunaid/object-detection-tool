@@ -1,6 +1,6 @@
 'use client';
 
-import React, { memo, useCallback, useState, useEffect } from 'react';
+import { memo, useCallback, useState, useEffect } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';

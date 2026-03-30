@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useCallback, memo } from 'react';
+import { useRef, useEffect, useCallback, memo } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { overlayBus } from '@/lib/overlayBus';
 import { clampRect } from '@/lib/utils/coordinates';

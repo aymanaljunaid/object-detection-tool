@@ -59,7 +59,7 @@ export class WebcamAdapter extends BaseSourceAdapter {
           resolve();
         };
         
-        const onError = (e: Event) => {
+        const onError = () => {
           videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
           videoElement.removeEventListener('error', onError);
           reject(new Error('Failed to load webcam stream'));

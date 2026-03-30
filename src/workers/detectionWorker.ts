@@ -117,11 +117,13 @@ function postprocessRaw(
   return nms(raw, iouThr).slice(0, maxDet);
 }
 
+// Use consistent demo classes across main-thread and worker
+const DEMO_CLASSES = [0, 1, 2, 3, 5, 7, 15, 16, 17, 24, 26, 39, 41, 56, 60, 62, 67, 73];
+
 function demoDetect(): Detection[] {
-  const classes = [0, 1, 2, 3, 5, 7];
   const n = Math.floor(Math.random() * 3) + 1;
   return Array.from({ length: n }, () => {
-    const classId = classes[Math.floor(Math.random() * classes.length)];
+    const classId = DEMO_CLASSES[Math.floor(Math.random() * DEMO_CLASSES.length)];
     const w = 0.1 + Math.random() * 0.25, h = 0.15 + Math.random() * 0.25;
     return {
       id: uid(), classId,

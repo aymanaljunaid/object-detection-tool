@@ -49,7 +49,7 @@ print('SUCCESS')
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     // Ensure directory exists
     if (!fs.existsSync(MODEL_DIR)) {

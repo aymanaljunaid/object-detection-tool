@@ -5,7 +5,7 @@
  * Each adapter handles source-specific initialization and cleanup.
  */
 
-import type { SourceConfig, PlaybackState, PlaybackError } from '@/types';
+import type { SourceConfig, PlaybackState } from '@/types';
 
 /**
  * Result of source initialization

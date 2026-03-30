@@ -1,6 +1,6 @@
 'use client';
 
-import React, { memo, useMemo, useCallback, useContext, createContext } from 'react';
+import { memo, useMemo, useCallback, useContext, createContext } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { useDetectionScheduler } from '@/hooks/useDetectionScheduler';
 import { CamCell } from './CamCell';

@@ -151,8 +151,8 @@ export function useFaceRecognition() {
           if (det.className !== 'person') return det;
 
           const personBox = {
-            x: det.bbox.x * frameWidth - (det.bbox.width * frameWidth) / 2,
-            y: det.bbox.y * frameHeight - (det.bbox.height * frameHeight) / 2,
+            x: det.bbox.x * frameWidth,
+            y: det.bbox.y * frameHeight,
             width: det.bbox.width * frameWidth,
             height: det.bbox.height * frameHeight,
           };

@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useRef, useEffect, useCallback, memo, useState } from 'react';
+import { useRef, useEffect, useCallback, memo, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { usePlayback } from '@/hooks/usePlayback';
 import { DetectionOverlay, DetectionStats } from '@/components/detection/DetectionOverlay';
 import { UI_CONFIG } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { Play, Pause, AlertCircle, Loader2, Radio, Video, Volume2, VolumeX } from 'lucide-react';
-import type { SourceWithState, SourceConfig } from '@/types';
+import type { SourceConfig } from '@/types';
 
 interface CamCellProps {
   sourceId: string;

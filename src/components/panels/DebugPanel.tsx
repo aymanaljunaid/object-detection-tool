@@ -6,7 +6,7 @@
 
 'use client';
 
-import React, { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,12 +21,11 @@ import {
   ChevronDown,
   ChevronUp,
   Bug,
-  RefreshCw,
   Sparkles,
   CheckCircle,
   AlertCircle,
 } from 'lucide-react';
-import { getDetector } from '@/services/detector';
+import { getWorkerClient } from '@/services/detectionWorkerClient';
 
 interface DebugPanelProps {
   className?: string;
@@ -62,12 +61,12 @@ export const DebugPanel = memo(function DebugPanel({
   // Update detector info periodically
   useEffect(() => {
     const updateDetectorInfo = () => {
-      const detector = getDetector();
+      const client = getWorkerClient();
       setDetectorInfo({
-        isReady: detector.isReady(),
-        isDemoMode: detector.isDemoMode(),
-        isLoading: detector.isLoading(),
-        error: detector.getError(),
+        isReady: client.isReady(),
+        isDemoMode: client.isDemoMode(),
+        isLoading: !client.isReady(), // Worker doesn't expose isLoading, infer from readiness
+        error: null, // Worker doesn't expose error separately
       });
     };
 

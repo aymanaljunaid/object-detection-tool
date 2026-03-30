@@ -5,7 +5,6 @@
  * All processing happens locally in the browser.
  */
 
-import * as faceapi from 'face-api.js';
 import type {
   FaceRecognitionConfig,
   FaceRecognitionResult,
@@ -19,6 +18,23 @@ import {
 } from '@/types/face';
 import { getAllEmbeddings } from '@/lib/faceStorage';
 import { logger, LOG_CATEGORIES } from '@/lib/utils/logger';
+
+type FaceApiModule = typeof import('face-api.js');
+type FaceApiInput = Parameters<FaceApiModule['detectAllFaces']>[0];
+
+let faceApiPromise: Promise<FaceApiModule> | null = null;
+
+async function loadFaceApi(): Promise<FaceApiModule> {
+  if (typeof window === 'undefined') {
+    throw new Error('face-api.js can only be loaded in the browser');
+  }
+
+  if (!faceApiPromise) {
+    faceApiPromise = import('face-api.js');
+  }
+
+  return faceApiPromise;
+}
 
 interface FaceRecognizerState {
   status: FaceRecognitionStatus;
@@ -63,6 +79,7 @@ export class FaceRecognizer {
     logger.info(LOG_CATEGORIES.DETECTION, '[FaceRecognizer] Loading face-api.js models...');
 
     try {
+      const faceapi = await loadFaceApi();
       const modelPath = '/models/face-api';
 
       await Promise.all([
@@ -128,12 +145,13 @@ export class FaceRecognizer {
       await this.loadModels();
     }
 
+    const faceapi = await loadFaceApi();
     const options = new faceapi.TinyFaceDetectorOptions({
       inputSize: 320,
       scoreThreshold: this.state.config.detectionThreshold,
     });
 
-    const detections = await faceapi.detectAllFaces(input as faceapi.TNetInput, options);
+    const detections = await faceapi.detectAllFaces(input as FaceApiInput, options);
 
     return detections.map((det) => ({
       box: {
@@ -153,13 +171,14 @@ export class FaceRecognizer {
       await this.loadModels();
     }
 
+    const faceapi = await loadFaceApi();
     const options = new faceapi.TinyFaceDetectorOptions({
       inputSize: 320,
       scoreThreshold: this.state.config.detectionThreshold,
     });
 
     const detection = await faceapi
-      .detectSingleFace(input as faceapi.TNetInput, options)
+      .detectSingleFace(input as FaceApiInput, options)
       .withFaceLandmarks()
       .withFaceDescriptor();
 
@@ -253,13 +272,14 @@ export class FaceRecognizer {
       `[FaceRecognizer] Known embeddings: ${this.state.knownEmbeddings.length} loaded`
     );
 
+    const faceapi = await loadFaceApi();
     const options = new faceapi.TinyFaceDetectorOptions({
       inputSize: 320,
       scoreThreshold: this.state.config.detectionThreshold,
     });
 
     const detections = await faceapi
-      .detectAllFaces(input as faceapi.TNetInput, options)
+      .detectAllFaces(input as FaceApiInput, options)
       .withFaceLandmarks()
       .withFaceDescriptors();
 
