@@ -8,6 +8,12 @@ import type { YOLOConfig, DetectionResult } from '@/types';
 type Resolve = (r: DetectionResult) => void;
 type Reject = (e: Error) => void;
 
+const WORKER_DISPOSED_ERROR = 'Worker disposed';
+
+export function isWorkerDisposedError(error: unknown): boolean {
+  return error instanceof Error && error.message === WORKER_DISPOSED_ERROR;
+}
+
 class DetectionWorkerClient {
   private worker: Worker | null = null;
   private ready = false;
@@ -81,7 +87,7 @@ class DetectionWorkerClient {
   }
 
   dispose(): void {
-    for (const [, p] of this.pending) p.reject(new Error('Worker disposed'));
+    for (const [, p] of this.pending) p.reject(new Error(WORKER_DISPOSED_ERROR));
     this.pending.clear();
     this.worker?.terminate();
     this.worker = null;

@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { initWorkerClient, disposeWorkerClient, getWorkerClient } from '@/services/detectionWorkerClient';
+import {
+  initWorkerClient,
+  disposeWorkerClient,
+  getWorkerClient,
+  isWorkerDisposedError,
+} from '@/services/detectionWorkerClient';
 import { useMultiFrameCapture } from './useFrameCapture';
 import { DEFAULT_DETECTION_CONFIG } from '@/lib/constants';
 import { overlayBus } from '@/lib/overlayBus';
@@ -152,6 +157,10 @@ export function useDetectionScheduler() {
         activeDetections: processingRef.current.size,
       });
     } catch (error) {
+      if (isWorkerDisposedError(error) || !isRunningRef.current) {
+        return;
+      }
+
       // Log detection errors for debugging - don't silently fail
       logger.error(
         LOG_CATEGORIES.DETECTION,
