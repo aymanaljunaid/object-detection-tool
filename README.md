@@ -42,7 +42,11 @@ A real-time, multi-source object detection web application powered by **YOLOv8**
 
 ## Screenshots
 
-> _Add screenshots here once the app is running._
+### Multi-Camera Grid View
+
+![Object Detection Dashboard grid view screenshot 1](./public/screenshots/dashboard-grid-1.png)
+
+![Object Detection Dashboard grid view screenshot 2](./public/screenshots/dashboard-grid-2.png)
 
 ---
 
